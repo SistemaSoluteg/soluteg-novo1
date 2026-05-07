@@ -57,7 +57,8 @@ export type MutationType =
   | "toggleTask"
   | "updateChecklistResponses"
   | "createComment"
-  | "saveSignature";   // sub-fase 3.4
+  | "saveSignature"
+  | "saveClientSignature";
 
 /** Entrada na fila de mutations offline. */
 export type PendingMutation = {

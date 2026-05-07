@@ -77,8 +77,12 @@ export default function TechnicianWorkOrderDetail() {
   // Fotos capturadas offline — carregadas do IndexedDB ao montar
   type OfflinePhoto = PendingMedia & { previewUrl: string };
   const [offlinePhotos, setOfflinePhotos] = useState<OfflinePhoto[]>([]);
-  // Override local para assinatura do técnico capturada offline
-  const [localTechSig, setLocalTechSig] = useState<string | null>(null);
+  // Override local para assinaturas capturadas offline (persistidas em localStorage)
+  const [localTechSig,    setLocalTechSig]    = useState<string | null>(null);
+  const [localClientSig,  setLocalClientSig]  = useState<string | null>(null);
+  // Chaves de localStorage para persistir assinaturas entre navegações
+  const techSigKey    = workOrderId ? `offline_tech_sig_${workOrderId}`    : "";
+  const clientSigKey  = workOrderId ? `offline_client_sig_${workOrderId}`  : "";
 
   // Diálogo: Pausar
   const [pauseOpen, setPauseOpen] = useState(false);
@@ -123,6 +127,15 @@ export default function TechnicianWorkOrderDetail() {
     setTechnicianId(parseInt(id));
   }, []);
 
+  // Carrega assinaturas offline do localStorage (persistem entre navegações)
+  useEffect(() => {
+    if (!workOrderId) return;
+    const tech   = localStorage.getItem(techSigKey);
+    const client = localStorage.getItem(clientSigKey);
+    if (tech)   setLocalTechSig(tech);
+    if (client) setLocalClientSig(client);
+  }, [workOrderId, techSigKey, clientSigKey]);
+
   // Carrega fotos offline do IndexedDB e cria object URLs para preview local
   useEffect(() => {
     if (!workOrderId) return;
@@ -130,7 +143,9 @@ export default function TechnicianWorkOrderDetail() {
 
     getPendingMediaByOrder(workOrderId)
       .then(items => {
-        const withUrls = items.map(item => {
+        // Só mostra fotos ainda pendentes de upload — fotos enviadas aparecem na lista do servidor
+        const pending = items.filter(item => !item.uploaded);
+        const withUrls = pending.map(item => {
           const url = URL.createObjectURL(item.blob);
           createdUrls.push(url);
           return { ...item, previewUrl: url };
@@ -192,19 +207,25 @@ export default function TechnicianWorkOrderDetail() {
       refetch();
       refetchTasks?.();
       refetchComments?.();
-      // Após sync bem-sucedido, atualiza o estado de fotos offline para refletir uploads
+      // Após sync, atualiza fotos (só mostra as ainda não enviadas) e limpa localStorage
       if (workOrderId) {
+        if (errors === 0) {
+          // Assinaturas sincronizadas — remove overrides locais
+          localStorage.removeItem(techSigKey);
+          localStorage.removeItem(clientSigKey);
+          setLocalTechSig(null);
+          setLocalClientSig(null);
+        }
         getPendingMediaByOrder(workOrderId).then(items => {
-          const updatedUrls: string[] = [];
-          const updated = items.map(item => {
-            const url = URL.createObjectURL(item.blob);
-            updatedUrls.push(url);
-            return { ...item, previewUrl: url };
-          });
+          // Só mostra fotos ainda pendentes — enviadas aparecem na lista do servidor
+          const pending = items.filter(item => !item.uploaded);
+          const updated = pending.map(item => ({
+            ...item,
+            previewUrl: URL.createObjectURL(item.blob),
+          }));
           setOfflinePhotos(updated);
-          // Limpa a assinatura local se sync foi OK (servidor já tem)
-          if (errors === 0) setLocalTechSig(null);
         }).catch(() => {});
+        refetchAttachments?.(); // Atualiza a lista de fotos do servidor
       }
 
       // Refetch checklists e só ENTÃO limpa o localStorage — garante que o servidor
@@ -427,13 +448,14 @@ export default function TechnicianWorkOrderDetail() {
     if (!isOnline) {
       try {
         await enqueueMutation("saveSignature", { workOrderId, signature: pendingSignature });
-        // Salva no IndexedDB para que o preview persista ao voltar para a tela
+        // localStorage garante que a assinatura persiste mesmo ao sair da tela offline
+        localStorage.setItem(techSigKey, pendingSignature);
+        // IndexedDB para fallback via useOfflineOrderDetail
         await saveOrderDetail({
           id: workOrderId,
           technicianSignature:  pendingSignature,
           technicianSignedAt:   new Date().toISOString(),
         });
-        // Override local para mostrar preview imediatamente sem esperar refetch
         setLocalTechSig(pendingSignature);
         setSignOpen(false);
         setPendingSignature(null);
@@ -448,10 +470,28 @@ export default function TechnicianWorkOrderDetail() {
     saveSignatureMutation.mutate({ workOrderId, signature: pendingSignature });
   }
 
-  function handleSaveClientSignature() {
+  async function handleSaveClientSignature() {
     if (!workOrderId || !pendingClientSignature) return;
     if (!pendingClientName.trim()) {
       toast.error("Nome do assinante é obrigatório");
+      return;
+    }
+    if (!isOnline) {
+      try {
+        await enqueueMutation("saveClientSignature", {
+          workOrderId,
+          clientSignature: pendingClientSignature,
+          clientName: pendingClientName.trim(),
+        });
+        localStorage.setItem(clientSigKey, pendingClientSignature);
+        setLocalClientSig(pendingClientSignature);
+        setClientSignOpen(false);
+        setPendingClientSignature(null);
+        setPendingClientName("");
+        toast.info("Assinatura do cliente salva localmente — será sincronizada ao voltar online");
+      } catch (err) {
+        toast.error("Erro ao salvar assinatura offline.");
+      }
       return;
     }
     saveClientSignatureMutation.mutate({
@@ -463,7 +503,12 @@ export default function TechnicianWorkOrderDetail() {
 
   async function handleConcluir() {
     if (!workOrderId) return;
-    // Usa assinatura local como fallback quando offline
+    // Concluir requer internet: garante que fotos e dados foram enviados antes de fechar a OS
+    if (!isOnline) {
+      toast.warning("Conclua a OS online para garantir que fotos e dados foram enviados.");
+      setConcludeOpen(false);
+      return;
+    }
     if (!(localTechSig ?? os?.technicianSignature)) {
       toast.error("É necessário assinar a OS antes de finalizar.");
       setConcludeOpen(false);
@@ -691,17 +736,24 @@ export default function TechnicianWorkOrderDetail() {
               </div>
             )}
 
-            {/* Assinatura do cliente */}
+            {/* Assinatura do cliente — usa override local quando capturada offline */}
             {canInteract && (
-              <div className={`flex items-center justify-between rounded-lg border p-3 ${os.clientSignature ? "bg-blue-50 border-blue-200" : "bg-slate-50 border-slate-200"}`}>
+              <div className={`flex items-center justify-between rounded-lg border p-3 ${
+                (localClientSig ?? os.clientSignature) ? "bg-blue-50 border-blue-200" : "bg-slate-50 border-slate-200"
+              }`}>
                 <div className="flex items-center gap-2">
-                  <PenLine className={`w-4 h-4 ${os.clientSignature ? "text-blue-600" : "text-slate-400"}`} />
+                  <PenLine className={`w-4 h-4 ${(localClientSig ?? os.clientSignature) ? "text-blue-600" : "text-slate-400"}`} />
                   <span className="text-sm font-medium">
-                    {os.clientSignature ? "Assinatura do cliente registrada" : "Sem assinatura (cliente)"}
+                    {(localClientSig ?? os.clientSignature) ? "Assinatura do cliente registrada" : "Sem assinatura (cliente)"}
                   </span>
+                  {localClientSig && !os.clientSignature && (
+                    <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded font-medium flex items-center gap-1">
+                      <WifiOff className="w-2.5 h-2.5" /> Offline
+                    </span>
+                  )}
                 </div>
                 <Button size="sm" variant="outline" onClick={() => setClientSignOpen(true)}>
-                  {os.clientSignature ? "Reassinar" : "Coletar assinatura"}
+                  {(localClientSig ?? os.clientSignature) ? "Reassinar" : "Coletar assinatura"}
                 </Button>
               </div>
             )}
@@ -807,7 +859,7 @@ export default function TechnicianWorkOrderDetail() {
                               if (!isOnline) {
                                 // Salva no localStorage para persistir entre navegações
                                 localStorage.setItem(draftKey, JSON.stringify(newResponses));
-                                enqueueMutation("updateChecklistResponses", { checklistId: checklist.id, workOrderId: workOrderId!, responses: newResponses })
+                                enqueueMutation("updateChecklistResponses", { checklistId: checklist.id, workOrderId: workOrderId!, responses: newResponses, isComplete })
                                   .then(() => {
                                     setSavingChecklistId(null);
                                     toast.info("Respostas salvas localmente — serão sincronizadas ao voltar online");

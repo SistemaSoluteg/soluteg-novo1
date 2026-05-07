@@ -168,6 +168,7 @@ async function dispatchMutation(
         checklistId: p.checklistId,
         workOrderId: p.workOrderId,
         responses:   p.responses,
+        isComplete:  p.isComplete,  // obrigatório — estava faltando e causava erro de validação
       });
       break;
 
@@ -184,11 +185,22 @@ async function dispatchMutation(
         workOrderId: p.workOrderId,
         signature:   p.signature,
       });
-      // Atualiza o cache local com a assinatura
       await saveOrderDetail({
-        id:                 p.workOrderId,
+        id:                  p.workOrderId,
         technicianSignature: p.signature,
         technicianSignedAt:  new Date().toISOString(),
+      });
+      break;
+
+    case "saveClientSignature":
+      await (client as any).technicianPortal.saveClientSignature.mutate({
+        workOrderId:     p.workOrderId,
+        clientSignature: p.clientSignature,
+        clientName:      p.clientName,
+      });
+      await saveOrderDetail({
+        id:              p.workOrderId,
+        clientSignature: p.clientSignature,
       });
       break;
 
@@ -299,7 +311,8 @@ export function getMutationLabel(type: MutationType): string {
     toggleTask:                "Marcar/desmarcar tarefa",
     updateChecklistResponses:  "Salvar respostas do checklist",
     createComment:             "Adicionar comentário",
-    saveSignature:             "Salvar assinatura",
+    saveSignature:             "Assinatura do técnico",
+    saveClientSignature:       "Assinatura do cliente",
   };
   return labels[type] ?? type;
 }
