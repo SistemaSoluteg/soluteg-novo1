@@ -14,43 +14,60 @@
 
 import { useEffect } from "react";
 import { toast } from "sonner";
-import { processSyncQueue, getPendingCount } from "@/lib/syncQueue";
+import { processSyncQueue, processMediaQueue, getPendingCount } from "@/lib/syncQueue";
+import { cleanOldUploadedMedia } from "@/lib/offlineDB";
 
 export function useAutoSync() {
   useEffect(() => {
+    // Limpeza de blobs antigos ao iniciar o app (independente de conectividade)
+    cleanOldUploadedMedia().catch(() => {});
+
     const handleOnline = async () => {
-      // Espera 2s para a rede estabilizar antes de sincronizar
+      // Espera 2s para a rede estabilizar
       await new Promise(r => setTimeout(r, 2000));
 
-      const count = await getPendingCount();
-      if (count === 0) return;
+      const mutationCount = await getPendingCount();
+      const hasAnything   = mutationCount > 0;
+
+      if (!hasAnything) {
+        // Verifica se há fotos pendentes mesmo sem mutations de texto
+        const { getAllPendingMedia } = await import("@/lib/offlineDB");
+        const media = await getAllPendingMedia();
+        if (media.filter(m => !m.uploaded).length === 0) return;
+      }
 
       const toastId = "global-sync";
-      toast.loading(
-        `Sincronizando ${count} alteração${count > 1 ? "ões" : ""}...`,
-        { id: toastId }
-      );
+      toast.loading("Sincronizando alterações offline...", { id: toastId });
 
-      const { synced, errors } = await processSyncQueue();
+      // Processa mutations de texto e fotos em paralelo
+      const [mutResult, mediaResult] = await Promise.all([
+        processSyncQueue(),
+        processMediaQueue(),
+      ]);
 
-      if (errors === 0) {
+      const totalSynced = mutResult.synced + mediaResult.uploaded;
+      const totalErrors = mutResult.errors  + mediaResult.errors;
+
+      if (totalErrors === 0) {
         toast.success(
-          `${synced} alteração${synced !== 1 ? "ões" : ""} sincronizada${synced !== 1 ? "s" : ""}!`,
+          totalSynced > 0
+            ? `${totalSynced} item${totalSynced !== 1 ? "ns" : ""} sincronizado${totalSynced !== 1 ? "s" : ""}!`
+            : "Sincronização concluída!",
           { id: toastId }
         );
       } else {
         toast.warning(
-          `${synced} sincronizadas, ${errors} com erro — veja em Pendentes`,
+          `${totalSynced} sincronizados, ${totalErrors} com erro`,
           { id: toastId }
         );
       }
 
       // Notifica todas as telas para atualizar seus dados
-      window.dispatchEvent(
-        new CustomEvent("soluteg:sync-complete", { detail: { synced, errors } })
-      );
+      window.dispatchEvent(new CustomEvent("soluteg:sync-complete", {
+        detail: { synced: totalSynced, errors: totalErrors },
+      }));
 
-      console.log(`[OFFLINE] Sync automático concluído: ${synced} ok, ${errors} erro`);
+      console.log(`[OFFLINE] Sync automático: ${mutResult.synced} mutations, ${mediaResult.uploaded} fotos, ${totalErrors} erros`);
     };
 
     window.addEventListener("online", handleOnline);

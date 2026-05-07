@@ -39,6 +39,8 @@ import {
   Loader2,
   Eye,
   Lock,
+  WifiOff,
+  UploadCloud,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -48,6 +50,13 @@ import ChecklistForm from "@/components/ChecklistForm";
 import ConnectionStatus from "@/components/ConnectionStatus";
 import { useOfflineOrderDetail, useOnlineStatus } from "@/hooks/useOfflineOrders";
 import { enqueueMutation } from "@/lib/syncQueue";
+import {
+  addPendingMedia,
+  getPendingMediaByOrder,
+  saveOrderDetail,
+  type PendingMedia,
+} from "@/lib/offlineDB";
+import { compressImage } from "@/lib/imageCompress";
 
 const TYPE_LABEL: Record<string, string> = {
   rotina: "Rotina",
@@ -64,6 +73,12 @@ export default function TechnicianWorkOrderDetail() {
   const workOrderId = match ? parseInt(params!.id) : null;
 
   const [technicianId, setTechnicianId] = useState<number | null>(null);
+
+  // Fotos capturadas offline — carregadas do IndexedDB ao montar
+  type OfflinePhoto = PendingMedia & { previewUrl: string };
+  const [offlinePhotos, setOfflinePhotos] = useState<OfflinePhoto[]>([]);
+  // Override local para assinatura do técnico capturada offline
+  const [localTechSig, setLocalTechSig] = useState<string | null>(null);
 
   // Diálogo: Pausar
   const [pauseOpen, setPauseOpen] = useState(false);
@@ -107,6 +122,26 @@ export default function TechnicianWorkOrderDetail() {
     }
     setTechnicianId(parseInt(id));
   }, []);
+
+  // Carrega fotos offline do IndexedDB e cria object URLs para preview local
+  useEffect(() => {
+    if (!workOrderId) return;
+    const createdUrls: string[] = [];
+
+    getPendingMediaByOrder(workOrderId)
+      .then(items => {
+        const withUrls = items.map(item => {
+          const url = URL.createObjectURL(item.blob);
+          createdUrls.push(url);
+          return { ...item, previewUrl: url };
+        });
+        setOfflinePhotos(withUrls);
+      })
+      .catch(err => console.error("[OFFLINE] Erro ao carregar fotos offline:", err));
+
+    // Revoga as object URLs ao desmontar para liberar memória
+    return () => createdUrls.forEach(url => URL.revokeObjectURL(url));
+  }, [workOrderId]);
 
   // Hook offline: busca do servidor quando online, do IndexedDB quando offline
   const { os: osRaw, isLoading, refetch } = useOfflineOrderDetail(workOrderId, technicianId);
@@ -157,6 +192,20 @@ export default function TechnicianWorkOrderDetail() {
       refetch();
       refetchTasks?.();
       refetchComments?.();
+      // Após sync bem-sucedido, atualiza o estado de fotos offline para refletir uploads
+      if (workOrderId) {
+        getPendingMediaByOrder(workOrderId).then(items => {
+          const updatedUrls: string[] = [];
+          const updated = items.map(item => {
+            const url = URL.createObjectURL(item.blob);
+            updatedUrls.push(url);
+            return { ...item, previewUrl: url };
+          });
+          setOfflinePhotos(updated);
+          // Limpa a assinatura local se sync foi OK (servidor já tem)
+          if (errors === 0) setLocalTechSig(null);
+        }).catch(() => {});
+      }
 
       // Refetch checklists e só ENTÃO limpa o localStorage — garante que o servidor
       // já recebeu e confirmou os dados antes de remover o rascunho offline.
@@ -372,8 +421,30 @@ export default function TechnicianWorkOrderDetail() {
     updateStatusMutation.mutate({ workOrderId, newStatus: "pausada", notes: pauseNotes || undefined });
   }
 
-  function handleSaveSignature() {
+  async function handleSaveSignature() {
     if (!workOrderId || !pendingSignature) return;
+
+    if (!isOnline) {
+      try {
+        await enqueueMutation("saveSignature", { workOrderId, signature: pendingSignature });
+        // Salva no IndexedDB para que o preview persista ao voltar para a tela
+        await saveOrderDetail({
+          id: workOrderId,
+          technicianSignature:  pendingSignature,
+          technicianSignedAt:   new Date().toISOString(),
+        });
+        // Override local para mostrar preview imediatamente sem esperar refetch
+        setLocalTechSig(pendingSignature);
+        setSignOpen(false);
+        setPendingSignature(null);
+        toast.info("Assinatura salva localmente — será sincronizada ao voltar online");
+        console.log(`[OFFLINE] Assinatura enfileirada para OS #${workOrderId}`);
+      } catch (err) {
+        console.error("[OFFLINE] Erro ao salvar assinatura offline:", err);
+        toast.error("Não foi possível salvar a assinatura offline.");
+      }
+      return;
+    }
     saveSignatureMutation.mutate({ workOrderId, signature: pendingSignature });
   }
 
@@ -392,7 +463,8 @@ export default function TechnicianWorkOrderDetail() {
 
   async function handleConcluir() {
     if (!workOrderId) return;
-    if (!os?.technicianSignature) {
+    // Usa assinatura local como fallback quando offline
+    if (!(localTechSig ?? os?.technicianSignature)) {
       toast.error("É necessário assinar a OS antes de finalizar.");
       setConcludeOpen(false);
       setSignOpen(true);
@@ -443,10 +515,45 @@ export default function TechnicianWorkOrderDetail() {
     const files = e.target.files;
     if (!files || files.length === 0 || !workOrderId) return;
 
-    // Fotos precisam de internet — o upload para Cloudinary é sempre online
-    // (sub-fase 3.4 adicionará suporte offline completo para fotos)
+    // Offline: salva os arquivos de imagem localmente no IndexedDB
     if (!isOnline) {
-      toast.error("Fotos precisam de conexão com a internet. Conecte-se e tente novamente.");
+      const imageFiles = Array.from(files).filter(f => f.type.startsWith("image/"));
+      if (imageFiles.length === 0) {
+        toast.error("PDFs e outros arquivos precisam de conexão. Tente ao voltar online.");
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return;
+      }
+      for (const file of imageFiles) {
+        try {
+          // Aplica compressão se habilitado (COMPRESS_PHOTOS = false por padrão)
+          const blob = await compressImage(file instanceof Blob ? file : new Blob([await file.arrayBuffer()], { type: file.type }));
+          const mediaId = await addPendingMedia({
+            orderId:   workOrderId,
+            blob,
+            mimeType:  file.type,
+            fileName:  file.name,
+            createdAt: Date.now(),
+            uploaded:  false,
+            retries:   0,
+          });
+          const previewUrl = URL.createObjectURL(blob);
+          setOfflinePhotos(prev => [...prev, {
+            id: mediaId, orderId: workOrderId, blob, mimeType: file.type,
+            fileName: file.name, createdAt: Date.now(), uploaded: false,
+            retries: 0, previewUrl,
+          }]);
+          console.log(`[OFFLINE] Foto salva localmente: ${file.name} (id=${mediaId})`);
+        } catch (err: any) {
+          if (err?.name === "QuotaExceededError") {
+            toast.error("Armazenamento cheio. Sincronize online antes de continuar.");
+          } else {
+            toast.error(`Erro ao salvar foto offline: ${file.name}`);
+          }
+        }
+      }
+      if (imageFiles.length > 0) {
+        toast.info(`${imageFiles.length} foto(s) salva(s) localmente — serão enviadas ao voltar online`);
+      }
       if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
@@ -552,15 +659,26 @@ export default function TechnicianWorkOrderDetail() {
               </div>
             )}
 
-            {/* Assinatura — indicador */}
-            {/* Assinatura do técnico */}
+            {/* Assinatura do técnico — usa override local quando capturada offline */}
             {canInteract && (
-              <div className={`flex items-center justify-between rounded-lg border p-3 ${os.technicianSignature ? "bg-green-50 border-green-200" : "bg-slate-50 border-slate-200"}`}>
+              <div className={`flex items-center justify-between rounded-lg border p-3 ${
+                (localTechSig ?? os.technicianSignature)
+                  ? "bg-green-50 border-green-200"
+                  : "bg-slate-50 border-slate-200"
+              }`}>
                 <div className="flex items-center gap-2">
-                  <PenLine className={`w-4 h-4 ${os.technicianSignature ? "text-green-600" : "text-slate-400"}`} />
+                  <PenLine className={`w-4 h-4 ${(localTechSig ?? os.technicianSignature) ? "text-green-600" : "text-slate-400"}`} />
                   <span className="text-sm font-medium">
-                    {os.technicianSignature ? "Sua assinatura registrada" : "Sem assinatura (técnico)"}
+                    {(localTechSig ?? os.technicianSignature)
+                      ? "Sua assinatura registrada"
+                      : "Sem assinatura (técnico)"}
                   </span>
+                  {/* Badge offline quando assinatura está na fila */}
+                  {localTechSig && !os.technicianSignature && (
+                    <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded font-medium flex items-center gap-1">
+                      <WifiOff className="w-2.5 h-2.5" /> Offline
+                    </span>
+                  )}
                   {os.technicianSignedAt && (
                     <span className="text-xs text-muted-foreground">
                       · {format(new Date(os.technicianSignedAt), "dd/MM HH:mm", { locale: ptBR })}
@@ -568,7 +686,7 @@ export default function TechnicianWorkOrderDetail() {
                   )}
                 </div>
                 <Button size="sm" variant="outline" onClick={() => setSignOpen(true)}>
-                  {os.technicianSignature ? "Reassinar" : "Assinar"}
+                  {(localTechSig ?? os.technicianSignature) ? "Reassinar" : "Assinar"}
                 </Button>
               </div>
             )}
@@ -820,6 +938,45 @@ export default function TechnicianWorkOrderDetail() {
                   Fotos e Anexos
                 </h2>
 
+                {/* Fotos capturadas offline — aparecem com badge "Salvo localmente" */}
+                {offlinePhotos.length > 0 && (
+                  <div className="grid grid-cols-2 gap-2">
+                    {offlinePhotos.map(photo => (
+                      <div key={`offline-${photo.id}`} className="rounded-lg overflow-hidden border border-orange-300 bg-orange-50 dark:bg-orange-950/30">
+                        <div className="block aspect-square relative">
+                          <img
+                            src={photo.previewUrl}
+                            alt={photo.fileName}
+                            className="w-full h-full object-cover"
+                          />
+                          {/* Badge de status da foto offline */}
+                          <div className={`absolute top-1 right-1 flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                            photo.uploaded
+                              ? "bg-green-600 text-white"
+                              : photo.lastError
+                              ? "bg-red-600 text-white"
+                              : "bg-orange-500 text-white"
+                          }`}>
+                            {photo.uploaded ? (
+                              <><UploadCloud className="w-3 h-3" /> Enviado</>
+                            ) : photo.lastError ? (
+                              <><AlertCircle className="w-3 h-3" /> Erro</>
+                            ) : (
+                              <><WifiOff className="w-3 h-3" /> Offline</>
+                            )}
+                          </div>
+                        </div>
+                        <div className="px-2 py-1.5 bg-orange-50 dark:bg-orange-950/30 min-h-[28px]">
+                          <span className="text-[10px] text-orange-700 dark:text-orange-300 truncate block">
+                            {photo.uploaded ? "Enviado — aguardando legenda" : "Será enviado ao conectar"}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Fotos já enviadas ao servidor */}
                 {attachments && attachments.length > 0 && (
                   <div className="grid grid-cols-2 gap-2">
                     {attachments.map((a: any) => (
@@ -883,6 +1040,7 @@ export default function TechnicianWorkOrderDetail() {
                   type="file"
                   multiple
                   accept="image/*,application/pdf"
+                  capture="environment"
                   className="hidden"
                   onChange={handleFileChange}
                 />

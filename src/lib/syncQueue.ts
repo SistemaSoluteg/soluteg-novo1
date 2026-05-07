@@ -22,6 +22,9 @@ import {
   removePendingMutation,
   countPendingMutations,
   saveOrderDetail,
+  getAllPendingMedia,
+  updatePendingMedia,
+  removePendingMedia,
 } from "./offlineDB";
 import { createSyncClient } from "./trpcStandalone";
 
@@ -201,6 +204,92 @@ async function dispatchMutation(
 /** Retorna a contagem de mutations com status "pending" (para o badge). */
 export async function getPendingCount(): Promise<number> {
   return countPendingMutations();
+}
+
+// ---------------------------------------------------------------------------
+// processMediaQueue — faz upload das fotos capturadas offline
+// ---------------------------------------------------------------------------
+
+export type MediaQueueResult = {
+  uploaded: number;
+  errors: number;
+};
+
+let mediaQueueInProgress = false;
+
+/**
+ * Processa a fila de mídias offline: faz upload de cada foto pendente para o
+ * Cloudinary via /api/work-orders/upload e cria o attachment na OS via tRPC.
+ *
+ * Chamado automaticamente pelo useAutoSync ao voltar online, junto com
+ * processSyncQueue.
+ */
+export async function processMediaQueue(): Promise<MediaQueueResult> {
+  if (mediaQueueInProgress) return { uploaded: 0, errors: 0 };
+  mediaQueueInProgress = true;
+
+  let uploaded = 0;
+  let errors   = 0;
+
+  try {
+    const pendingItems = (await getAllPendingMedia()).filter(m => !m.uploaded);
+    if (pendingItems.length === 0) return { uploaded: 0, errors: 0 };
+
+    console.log(`[OFFLINE] Processando ${pendingItems.length} foto(s) pendente(s)`);
+
+    const client = createSyncClient();
+
+    for (const media of pendingItems) {
+      try {
+        // Faz o upload do Blob como FormData para o endpoint existente do backend
+        const formData = new FormData();
+        formData.append("files", media.blob, media.fileName);
+
+        const res = await fetch("/api/work-orders/upload", {
+          method: "POST",
+          body: formData,
+          credentials: "include",
+          headers: { "X-Sync-Source": "technician-offline" },
+        });
+
+        if (!res.ok) throw new Error(`Upload falhou: HTTP ${res.status}`);
+
+        const data = await res.json();
+        if (!data.success || !data.urls?.[0]) {
+          throw new Error(data.message || "Resposta de upload inválida");
+        }
+
+        const file = data.urls[0];
+
+        // Cria o attachment na OS via tRPC standalone
+        await (client as any).technicianPortal.attachments.create.mutate({
+          workOrderId: media.orderId,
+          fileName:    file.fileName,
+          fileKey:     file.key,
+          fileUrl:     file.url,
+          fileType:    file.fileType,
+          fileSize:    file.fileSize,
+          category:    "during",
+        });
+
+        // Marca como enviado — o Blob fica por 7 dias para consulta offline
+        await updatePendingMedia(media.id!, { uploaded: true, cloudinaryUrl: file.url });
+        uploaded++;
+        console.log(`[OFFLINE] Foto enviada: ${media.fileName} → ${file.url}`);
+      } catch (err) {
+        const newRetries = media.retries + 1;
+        const errorMsg   = err instanceof Error ? err.message : String(err);
+        await updatePendingMedia(media.id!, { retries: newRetries, lastError: errorMsg });
+        errors++;
+        console.error(`[OFFLINE] Erro ao enviar foto ${media.fileName}:`, errorMsg);
+      }
+    }
+  } finally {
+    mediaQueueInProgress = false;
+  }
+
+  console.log(`[OFFLINE] Fila de mídias: ${uploaded} enviada(s), ${errors} erro(s)`);
+  return { uploaded, errors };
 }
 
 /** Retorna o label descritivo de um tipo de mutation (para o modal). */
