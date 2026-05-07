@@ -53,6 +53,7 @@
     "@types/nodemailer": "^8.0.0",
     "@types/pdfkit": "^0.17.4",
     "@types/qrcode": "^1.5.6",
+    "@types/web-push": "^3.6.4",
     "axios": "^1.12.0",
     "bcrypt": "^6.0.0",
     "bcryptjs": "^3.0.3",
@@ -103,6 +104,7 @@
     "tailwind-merge": "^3.3.1",
     "tailwindcss-animate": "^1.0.7",
     "vaul": "^1.1.2",
+    "web-push": "^3.6.7",
     "whatsapp-web.js": "^1.26.0",
     "wouter": "^3.3.5",
     "zod": "^4.1.12"

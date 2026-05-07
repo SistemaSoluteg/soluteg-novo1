@@ -1,4 +1,4 @@
-import { mysqlTable, int, varchar, text, tinyint, datetime, mysqlEnum, timestamp, uniqueIndex } from "drizzle-orm/mysql-core";
+import { mysqlTable, int, varchar, text, tinyint, datetime, mysqlEnum, timestamp, uniqueIndex, json, index } from "drizzle-orm/mysql-core";
 import { sql } from "drizzle-orm";
 /**
  * Core user table backing auth flow.
@@ -919,3 +919,81 @@ export const laudoCitacoes = mysqlTable("laudoCitacoes", {
 
 export type LaudoCitacao = typeof laudoCitacoes.$inferSelect;
 export type InsertLaudoCitacao = typeof laudoCitacoes.$inferInsert;
+
+// ─── Web Push Notifications ───────────────────────────────────────────────────
+
+/**
+ * Subscriptions de Web Push.
+ *
+ * Cada entrada representa um dispositivo/navegador de um usuário que optou por
+ * receber notificações push. Um usuário pode ter múltiplas subscriptions ativas
+ * (celular, tablet, notebook).
+ *
+ * Quando o navegador invalida a subscription (ex: usuário desativou nas configurações),
+ * o servidor recebe erro 410 Gone e marca active=0 automaticamente.
+ */
+export const pushSubscriptions = mysqlTable("pushSubscriptions", {
+  id:        int("id").autoincrement().primaryKey(),
+  // ID do cliente ou técnico — NUNCA aceitar do input, sempre do ctx JWT
+  userId:    int("userId").notNull(),
+  // Diferencia cliente de técnico no lookup
+  userType:  mysqlEnum("userType", ["client", "technician"]).notNull(),
+  // Dados obrigatórios da Web Push API para criptografia e entrega
+  endpoint:  text("endpoint").notNull(),
+  p256dh:    text("p256dh").notNull(),
+  auth:      text("auth").notNull(),
+  // Para debugging: identifica o dispositivo pelo User-Agent
+  userAgent: varchar("userAgent", { length: 500 }),
+  // Timestamp da última entrega bem-sucedida para este endpoint
+  lastUsedAt: timestamp("lastUsedAt"),
+  // 0 = inativa (removida pelo usuário ou erro 410); 1 = ativa
+  active:    tinyint("active").default(1).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => [
+  // Busca rápida de todas as subscriptions ativas de um usuário
+  index("idx_user").on(t.userId, t.userType),
+]);
+
+export type PushSubscription = typeof pushSubscriptions.$inferSelect;
+export type InsertPushSubscription = typeof pushSubscriptions.$inferInsert;
+
+/**
+ * Log imutável de todas as tentativas de notificação.
+ *
+ * Cada vez que o sistema tenta entregar uma notificação (push, WhatsApp ou email),
+ * registra aqui. Isso permite debugar reclamações como "fulano não recebeu":
+ * basta filtrar por userId na tela /gestor/notification-logs.
+ *
+ * Tipos de evento (notificationType):
+ *   alarm              → alerta de caixa d'água
+ *   order_new          → nova OS criada/atribuída
+ *   order_updated      → OS atualizada
+ *   order_completed    → OS concluída (WhatsApp obrigatório com PDF)
+ *   budget_new         → orçamento criado
+ *   budget_approved    → orçamento aprovado
+ *   budget_rejected    → orçamento reprovado
+ */
+export const notificationLogs = mysqlTable("notificationLogs", {
+  id:               int("id").autoincrement().primaryKey(),
+  userId:           int("userId").notNull(),
+  userType:         mysqlEnum("userType", ["client", "technician", "admin"]).notNull(),
+  // Qual evento gerou esta notificação
+  notificationType: varchar("notificationType", { length: 50 }).notNull(),
+  // Canal efetivamente usado nesta tentativa
+  channel:          mysqlEnum("channel", ["push", "whatsapp", "email"]).notNull(),
+  // 1 = entregue, 0 = falhou
+  success:          tinyint("success").default(0).notNull(),
+  // Mensagem de erro do canal, se falhou
+  errorMessage:     text("errorMessage"),
+  // Payload completo para reproduzir e debugar
+  payload:          json("payload"),
+  createdAt:        timestamp("createdAt").defaultNow().notNull(),
+}, (t) => [
+  index("idx_user_log").on(t.userId, t.userType),
+  index("idx_created").on(t.createdAt),
+  index("idx_channel").on(t.channel),
+]);
+
+export type NotificationLog = typeof notificationLogs.$inferSelect;
+export type InsertNotificationLog = typeof notificationLogs.$inferInsert;

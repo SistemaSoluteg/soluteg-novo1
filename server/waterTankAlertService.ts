@@ -25,6 +25,7 @@
 import { sql } from "drizzle-orm";
 import { getDb } from "./db";
 import type { SensorAlertState, SensorZone } from "./mqttService";
+import { sendPushToUser, type PushPayload } from "./lib/webPush";
 
 const CONFIRM = 5;
 
@@ -267,14 +268,52 @@ export async function checkAndSendAlerts(params: {
     ) => {
       const message = buildGenericMessage(alertType, cfg.tankType, cfg.clientName, tankName, currentLevel, triggerPct);
 
+      // ── Tentativa de Web Push para o CLIENTE ─────────────────────────────────
+      // Se o cliente tiver o portal PWA com notificações ativas, entregamos via push.
+      // Se o push for bem-sucedido, removemos o telefone do cliente da lista WhatsApp
+      // (admin e técnico ainda recebem WhatsApp normalmente).
+      // O sistema de retry do waterTankAlertLog não é alterado.
+      let clientPushDelivered = false;
+      if (cfg.clientId) {
+        try {
+          const pushPayload: PushPayload = {
+            title:              `⚠️ Alerta — ${tankName}`,
+            body:               `Nível: ${currentLevel}% — ${message.split("\n")[0]}`,
+            icon:               "/icon-192.png",
+            badge:              "/badge-72.png",
+            url:                "/client/water-tank",
+            tag:                `alarm-${sensorId}`,
+            requireInteraction: alertType === "alarm2" || alertType === "sci_reserve",
+          };
+          const pushResult = await sendPushToUser(cfg.clientId, "client", pushPayload);
+          if (pushResult.delivered) {
+            clientPushDelivered = true;
+            console.log(`[PUSH] Alerta ${alertType} entregue via push para clientId=${cfg.clientId} — WhatsApp do cliente suprimido`);
+          }
+        } catch (pushErr: any) {
+          // Push falhou — segue normalmente para WhatsApp
+          console.warn("[PUSH] Erro ao tentar push de alarme:", pushErr?.message);
+        }
+      }
+
+      // Remove o telefone do cliente da lista WhatsApp se push foi entregue
+      // Técnico e alertPhone continuam recebendo WhatsApp
+      let phonesToNotify = phones;
+      if (clientPushDelivered && cfg.clientPhone) {
+        phonesToNotify = phones.filter(p => p !== cfg.clientPhone);
+      }
+
       let delivered = false;
       const errors: string[] = [];
 
-      if (phones.length === 0) {
+      if (phonesToNotify.length === 0 && !clientPushDelivered) {
         errors.push("Nenhum telefone configurado para este sensor/cliente");
       }
 
-      for (const phone of phones) {
+      // Considera entregue se push chegou (mesmo sem WhatsApp)
+      if (clientPushDelivered) delivered = true;
+
+      for (const phone of phonesToNotify) {
         const result = await sendWithTracking(phone, message);
         if (result.delivered) {
           delivered = true;
@@ -302,7 +341,7 @@ export async function checkAndSendAlerts(params: {
            direction, tankType, observation, delivered, deliveryError, osId)
         VALUES
           (${sensorId}, ${clientId}, ${tankName}, ${alertType}, ${triggerPct},
-           ${currentLevel}, ${phones.join(", ") || null}, ${direction}, ${cfg.tankType},
+           ${currentLevel}, ${phonesToNotify.join(", ") || null}, ${direction}, ${cfg.tankType},
            ${observation}, ${delivered ? 1 : 0}, ${deliveryError}, ${osId})
       `);
 

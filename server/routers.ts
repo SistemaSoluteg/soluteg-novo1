@@ -20,6 +20,7 @@ import { waterTankAdminRouter } from "./routers/waterTankAdmin.router";
 import { pdvRouter } from "./routers/pdv.router";
 import { laudosRouter } from "./routers/laudos.router";
 import { whatsappRouter } from "./routers/whatsapp.router";
+import { pushSubscriptionsRouter } from "./routers/pushSubscriptions";
 
 export const appRouter = router({
   system: systemRouter,
@@ -42,6 +43,7 @@ export const appRouter = router({
   pdv: pdvRouter,
   laudos: laudosRouter,
   whatsapp: whatsappRouter,
+  pushSubscriptions: pushSubscriptionsRouter,
 });
 
 export type AppRouter = typeof appRouter;
