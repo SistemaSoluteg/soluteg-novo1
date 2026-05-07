@@ -17,6 +17,8 @@ import { toast } from "sonner";
 import { APP_LOGO } from "@/const";
 import { SolutegFooter } from "@/components/SolutegFooter";
 import { trpc } from "@/lib/trpc";
+import InstallPWAPrompt from "@/components/InstallPWAPrompt";
+import { useClientManifest } from "@/hooks/useClientManifest";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { WaterTankContent } from "./WaterTankMonitoring";
 
@@ -76,6 +78,9 @@ function getInitials(name: string) {
 }
 
 export default function ClientPortal() {
+  // Troca o manifest PWA para o do cliente enquanto este portal está aberto
+  useClientManifest();
+
   const [activePage, setActivePage] = useState<Page>("home");
   const [clientId, setClientId] = useState<number | null>(null);
   const [clientName, setClientName] = useState("");
@@ -548,6 +553,12 @@ export default function ClientPortal() {
 
   return (
     <div className="min-h-screen bg-slate-50 pb-20 md:pb-0">
+
+      {/* Banner de instalação PWA — convida o cliente a adicionar atalho à tela inicial */}
+      <InstallPWAPrompt
+        storageKey="pwa_client_install_dismissed_at"
+        label="Adicionar atalho à tela inicial para acesso rápido"
+      />
 
       {/* ── Header ── */}
       <header className="bg-slate-900 text-white sticky top-0 z-30 shadow-md">

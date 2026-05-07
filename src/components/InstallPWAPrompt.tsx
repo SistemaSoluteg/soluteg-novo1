@@ -20,8 +20,8 @@ import { Button } from "@/components/ui/button";
 
 // Tempo de espera antes de esconder o banner novamente (30 dias em ms)
 const SNOOZE_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
-// Chave no localStorage que guarda quando o usuário clicou "Agora não"
-const STORAGE_KEY = "pwa_install_dismissed_at";
+// Chave padrão — pode ser sobrescrita via prop para separar técnico e cliente
+const DEFAULT_STORAGE_KEY = "pwa_install_dismissed_at";
 
 // Tipo do evento nativo do browser para prompt de instalação PWA
 interface BeforeInstallPromptEvent extends Event {
@@ -29,14 +29,24 @@ interface BeforeInstallPromptEvent extends Event {
   readonly userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
 }
 
-export default function InstallPWAPrompt() {
+interface InstallPWAPromptProps {
+  /** Chave do localStorage para persistir a escolha. Padrão: portal do técnico. */
+  storageKey?: string;
+  /** Texto do banner. Padrão: "Instalar app para usar offline" */
+  label?: string;
+}
+
+export default function InstallPWAPrompt({
+  storageKey = DEFAULT_STORAGE_KEY,
+  label = "Instalar app para usar offline em campo",
+}: InstallPWAPromptProps) {
   // Guarda o evento capturado para dispará-lo quando o usuário clicar "Instalar"
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [visivel, setVisivel] = useState(false);
 
   useEffect(() => {
     // Verifica se o usuário já dispensou o banner recentemente
-    const dismissedAt = localStorage.getItem(STORAGE_KEY);
+    const dismissedAt = localStorage.getItem(storageKey);
     if (dismissedAt) {
       const elapsed = Date.now() - parseInt(dismissedAt, 10);
       // Ainda está dentro do período de soneca → não mostra
@@ -69,7 +79,7 @@ export default function InstallPWAPrompt() {
 
   // Usuário não quer instalar agora — persiste a data para não perguntar por 30 dias
   function handleAgora() {
-    localStorage.setItem(STORAGE_KEY, String(Date.now()));
+    localStorage.setItem(storageKey, String(Date.now()));
     setVisivel(false);
     console.log("[OFFLINE] Banner de instalação dispensado pelo usuário");
   }
@@ -86,8 +96,7 @@ export default function InstallPWAPrompt() {
       {/* Ícone e texto principal */}
       <Download className="w-4 h-4 flex-shrink-0" />
       <p className="text-sm flex-1 leading-tight">
-        <span className="font-semibold">Instalar app </span>
-        <span className="opacity-90">para usar offline em campo</span>
+        <span className="opacity-90">{label}</span>
       </p>
 
       {/* Botões de ação */}
