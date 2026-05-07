@@ -8,7 +8,7 @@
  * e re-exporta como JPEG com a qualidade configurada.
  */
 
-import { COMPRESS_PHOTOS } from "@/config/offline";
+import { COMPRESS_PHOTOS } from "@/Config/offline";
 
 /**
  * Comprime um Blob de imagem usando Canvas.
