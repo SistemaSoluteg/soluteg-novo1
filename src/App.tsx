@@ -48,6 +48,8 @@ import AdminLaudos from "./pages/AdminLaudos";
 import AdminLaudoForm from "./pages/AdminLaudoForm";
 import TecnicoLaudos from "./pages/TecnicoLaudos";
 import TecnicoLaudoForm from "./pages/TecnicoLaudoForm";
+import TechnicianOfflineStatus from "./pages/TechnicianOfflineStatus";
+import TechnicianHowOfflineWorks from "./pages/TechnicianHowOfflineWorks";
 import PdvLayout from "./components/pdv/PdvLayout";
 import { useAutoSync } from "./hooks/useAutoSync";
 import PdvDashboard from "./pages/pdv/PdvDashboard";
@@ -111,6 +113,8 @@ function Router() {
       <Route path="/technician/laudos" component={TecnicoLaudos} />
       <Route path="/technician/laudos/novo" component={TecnicoLaudoForm} />
       <Route path="/technician/laudos/:id" component={TecnicoLaudoForm} />
+      <Route path="/technician/offline-status" component={TechnicianOfflineStatus} />
+      <Route path="/technician/como-funciona-offline" component={TechnicianHowOfflineWorks} />
 
       {/* PDV Routes */}
       <Route path="/pdv">{() => <PdvRoute component={PdvDashboard} />}</Route>

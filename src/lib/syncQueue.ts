@@ -25,6 +25,7 @@ import {
   getAllPendingMedia,
   updatePendingMedia,
   removePendingMedia,
+  logOfflineError,
 } from "./offlineDB";
 import { createSyncClient } from "./trpcStandalone";
 
@@ -122,6 +123,14 @@ async function _processSyncQueueInner(): Promise<SyncResult> {
           `[OFFLINE] Mutation falhou definitivamente (${MAX_RETRIES} tentativas): ${mutation.type}`,
           errorMsg
         );
+        // Registra no log persistente para exibição na página de status offline
+        logOfflineError({
+          timestamp:      Date.now(),
+          source:         "mutation",
+          type:           mutation.type,
+          message:        errorMsg,
+          payloadSummary: JSON.stringify(mutation.payload).slice(0, 500),
+        }).catch(() => {});
       } else {
         console.warn(
           `[OFFLINE] Tentativa ${newRetries}/${MAX_RETRIES} falhou: ${mutation.type}`,
@@ -294,6 +303,13 @@ export async function processMediaQueue(): Promise<MediaQueueResult> {
         await updatePendingMedia(media.id!, { retries: newRetries, lastError: errorMsg });
         errors++;
         console.error(`[OFFLINE] Erro ao enviar foto ${media.fileName}:`, errorMsg);
+        logOfflineError({
+          timestamp:      Date.now(),
+          source:         "media",
+          type:           "upload",
+          message:        errorMsg,
+          payloadSummary: media.fileName,
+        }).catch(() => {});
       }
     }
   } finally {

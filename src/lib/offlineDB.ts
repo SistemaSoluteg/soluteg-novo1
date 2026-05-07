@@ -13,7 +13,7 @@
 import { openDB, IDBPDatabase } from "idb";
 
 const DB_NAME    = "soluteg-offline";
-const DB_VERSION = 3; // v2→v3: adiciona pendingMedia
+const DB_VERSION = 4; // v3→v4: adiciona errorLog (rolling buffer)
 
 // ---------------------------------------------------------------------------
 // Tipos
@@ -119,6 +119,11 @@ export async function openOfflineDB(): Promise<IDBPDatabase> {
       if (oldVersion < 3) {
         db.createObjectStore("pendingMedia", { keyPath: "id", autoIncrement: true });
         console.log("[OFFLINE] Store 'pendingMedia' criado no IndexedDB");
+      }
+      // v4: log de erros definitivos (rolling buffer — máx. 100 entradas)
+      if (oldVersion < 4) {
+        db.createObjectStore("errorLog", { keyPath: "id", autoIncrement: true });
+        console.log("[OFFLINE] Store 'errorLog' criado no IndexedDB");
       }
     },
     blocked() {
@@ -299,4 +304,71 @@ export async function cleanOldUploadedMedia(): Promise<void> {
   if (oldItems.length > 0) {
     console.log(`[OFFLINE] ${oldItems.length} blob(s) antigo(s) removido(s) do cache`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// CRUD — store "errorLog" (rolling buffer de erros definitivos)
+// ---------------------------------------------------------------------------
+
+const ERROR_LOG_MAX = 100;
+
+/** Entrada no log de erros offline. */
+export type ErrorLogEntry = {
+  id?: number;
+  timestamp: number;
+  /** Origem do erro: mutation de texto, upload de mídia ou sync geral. */
+  source: "mutation" | "media" | "sync";
+  /** Tipo da mutation ou "upload" para mídias. */
+  type: string;
+  message: string;
+  /** JSON com o payload da mutation para debug (truncado em 500 chars). */
+  payloadSummary?: string;
+};
+
+/**
+ * Registra um erro no log persistente.
+ * Mantém no máximo 100 entradas — remove as mais antigas quando excede.
+ */
+export async function logOfflineError(entry: Omit<ErrorLogEntry, "id">): Promise<void> {
+  const db = await openOfflineDB();
+  await db.add("errorLog", entry);
+
+  // Rolling buffer: remove entradas acima do limite
+  const all = (await db.getAll("errorLog")) as ErrorLogEntry[];
+  if (all.length > ERROR_LOG_MAX) {
+    const toDelete = all
+      .sort((a, b) => a.timestamp - b.timestamp)
+      .slice(0, all.length - ERROR_LOG_MAX);
+    for (const e of toDelete) {
+      await db.delete("errorLog", e.id!);
+    }
+  }
+}
+
+/** Retorna todos os erros do log, do mais recente ao mais antigo. */
+export async function getErrorLog(): Promise<ErrorLogEntry[]> {
+  const db  = await openOfflineDB();
+  const all = (await db.getAll("errorLog")) as ErrorLogEntry[];
+  return all.sort((a, b) => b.timestamp - a.timestamp);
+}
+
+/** Limpa todo o log de erros. */
+export async function clearErrorLog(): Promise<void> {
+  const db = await openOfflineDB();
+  await db.clear("errorLog");
+}
+
+// ---------------------------------------------------------------------------
+// clearAllOfflineData — limpa todos os stores (uso administrativo)
+// ---------------------------------------------------------------------------
+
+/** Remove todos os dados offline do IndexedDB. Usar com confirmação do usuário. */
+export async function clearAllOfflineData(): Promise<void> {
+  const db = await openOfflineDB();
+  await db.clear("orders");
+  await db.clear("metadata");
+  await db.clear("pendingMutations");
+  await db.clear("pendingMedia");
+  await db.clear("errorLog");
+  console.log("[OFFLINE] Todos os dados offline removidos do IndexedDB");
 }

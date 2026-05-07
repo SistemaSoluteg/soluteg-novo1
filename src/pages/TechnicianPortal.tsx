@@ -26,6 +26,8 @@ import {
   FileText,
   Clock,
   AlertTriangle,
+  WifiOff,
+  HelpCircle,
 } from "lucide-react";
 import {
   Dialog,
@@ -170,6 +172,41 @@ export default function TechnicianPortal() {
               <p className="text-xs text-muted-foreground">Criar e editar laudos de inspeção</p>
             </div>
             <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-blue-600" />
+          </button>
+
+          <button
+            onClick={() => setLocation("/technician/offline-status")}
+            className="flex items-center gap-3 bg-white dark:bg-gray-900 rounded-lg border p-4 text-left hover:shadow-md hover:border-orange-300 transition-all group"
+          >
+            <div className="p-2 bg-orange-50 dark:bg-orange-950 rounded-lg">
+              <WifiOff className="w-5 h-5 text-orange-600" />
+            </div>
+            <div className="flex-1">
+              <p className="font-semibold text-sm flex items-center gap-2">
+                Status Offline
+                {pendingCount > 0 && (
+                  <span className="text-[10px] bg-orange-500 text-white px-1.5 py-0.5 rounded-full font-bold">
+                    {pendingCount}
+                  </span>
+                )}
+              </p>
+              <p className="text-xs text-muted-foreground">Pendentes, cache e sincronização</p>
+            </div>
+            <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-orange-600" />
+          </button>
+
+          <button
+            onClick={() => setLocation("/technician/como-funciona-offline")}
+            className="flex items-center gap-3 bg-white dark:bg-gray-900 rounded-lg border p-4 text-left hover:shadow-md hover:border-gray-300 transition-all group"
+          >
+            <div className="p-2 bg-gray-100 dark:bg-gray-800 rounded-lg">
+              <HelpCircle className="w-5 h-5 text-gray-600" />
+            </div>
+            <div className="flex-1">
+              <p className="font-semibold text-sm">Como funciona offline</p>
+              <p className="text-xs text-muted-foreground">Guia rápido para trabalhar sem internet</p>
+            </div>
+            <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-gray-600" />
           </button>
         </div>
 
