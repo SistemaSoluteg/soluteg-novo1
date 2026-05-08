@@ -657,37 +657,32 @@ export async function generateWorkOrderPDF(workOrderId: number): Promise<Buffer>
         for (let i = 0; i < images.length; i++) {
           const col  = i % numCols;
           const xPos = leftMargin + col * (imgW + gap);
-          const imageY = currentY;
-          
-          if (i > 0 && col === 0) currentY += maxRowHeight + gap + 50; // 50px extra para legenda
-          if (currentY > doc.page.height - 150) { doc.addPage(); currentY = 40; }
-          
+
+          // Avança para a próxima linha e verifica quebra de página apenas no início de cada nova linha
+          if (i > 0 && col === 0) {
+            currentY += maxRowHeight + gap + 20; // espaço para legenda
+            maxRowHeight = imgH;
+            if (currentY > doc.page.height - imgH - 40) { doc.addPage(); currentY = 40; }
+          }
+
           try {
             const resp = await axios.get(images[i].fileUrl, { responseType: 'arraybuffer' });
             doc.image(resp.data, xPos, currentY, { width: imgW, height: imgH, fit: [imgW, imgH], align: 'center', valign: 'center' });
-          } catch { 
-            doc.rect(xPos, currentY, imgW, imgH).strokeColor('#CCCCCC').stroke(); 
+          } catch {
+            doc.rect(xPos, currentY, imgW, imgH).strokeColor('#CCCCCC').stroke();
           }
-          
-          // ✅ ADICIONAR LEGENDA ABAIXO DA FOTO
-          const legendY = currentY + imgH + 5;
-          doc.fontSize(8)
-             .fillColor('#333333')
-             .font('Helvetica');
-          
+
+          // Legenda abaixo da foto — somente com posição absoluta, nunca usa cursor interno do PDFKit
           if (images[i].description) {
-            doc.text(images[i].description, xPos, legendY, { 
-              width: imgW, 
-              align: 'center',
-              ellipsis: true 
-            });
+            const legendY = currentY + imgH + 4;
+            doc.fontSize(8).fillColor('#555555').font('Helvetica')
+               .text(images[i].description, xPos, legendY, { width: imgW, align: 'center', ellipsis: true });
+            maxRowHeight = Math.max(maxRowHeight, imgH + 20);
           } else {
-            doc.text(' ');
+            maxRowHeight = Math.max(maxRowHeight, imgH);
           }
-          
-          maxRowHeight = Math.max(maxRowHeight, imgH + 25);
         }
-        currentY += maxRowHeight + 35;
+        currentY += maxRowHeight + 30;
       }
 
       // ── ASSINATURAS ───────────────────────────────────────────
