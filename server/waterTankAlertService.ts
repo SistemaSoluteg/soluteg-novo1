@@ -433,11 +433,12 @@ export async function checkAndSendAlerts(params: {
       }
     }
 
-    // Normalizado — nível atingiu 85% após ciclo de alarme (fora do bloco CONFIRM)
-    // Não exige CONFIRM: chega em 85% e para de subir é sinal suficiente.
-    // Acionado em todo flush enquanto a condição for verdadeira, mas
-    // normalizedNotified garante disparo único por ciclo de alarme.
-    if (currentLevel >= 85 && state.currentZone !== "normal" && !state.normalizedNotified) {
+    // Normalizado — nível atingiu 85% após ciclo de alarme de NÍVEL BAIXO (alarm1/alarm2/sci).
+    // Não dispara quando saindo de boia_high, pois boia_high é "nível alto demais",
+    // não um alarme de falta d'água — evita falso "nível restaurado" quando a caixa
+    // enche normalmente e a leitura passa por 100% (que cai em boia_high no determineZone).
+    const wasLowAlarm = state.currentZone === "alarm1" || state.currentZone === "alarm2" || state.currentZone === "sci";
+    if (currentLevel >= 85 && wasLowAlarm && !state.normalizedNotified) {
       await fire("level_restored", 85, "up", "Nível normalizado — 85%", getPhones());
       state.normalizedNotified = true;
       state.currentZone = "normal";
