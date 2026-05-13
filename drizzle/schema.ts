@@ -1,4 +1,4 @@
-import { mysqlTable, int, varchar, text, tinyint, datetime, mysqlEnum, timestamp, uniqueIndex, json, index } from "drizzle-orm/mysql-core";
+import { mysqlTable, int, bigint, varchar, text, tinyint, datetime, mysqlEnum, timestamp, uniqueIndex, json, index } from "drizzle-orm/mysql-core";
 import { sql } from "drizzle-orm";
 /**
  * Core user table backing auth flow.
@@ -997,3 +997,173 @@ export const notificationLogs = mysqlTable("notificationLogs", {
 
 export type NotificationLog = typeof notificationLogs.$inferSelect;
 export type InsertNotificationLog = typeof notificationLogs.$inferInsert;
+
+// ============================================================
+// TABELAS DE AUDITORIA E SEGURANÇA — Fase 3.7.1a (multi-tenant)
+// Criadas em 2026-05-13. NÃO alteram dados ou tabelas existentes.
+// ============================================================
+
+/**
+ * Log de auditoria central do sistema.
+ *
+ * Registra TODA ação sensível: criação de tenant, reset de senha,
+ * exclusão de dados, mudança de permissão, etc.
+ *
+ * Campos importantes:
+ *   actorType  → quem agiu: platformAdmin | tenantAdmin | gestor | technician | system
+ *   action     → o que fez: ex. 'tenant.create', 'auth.login.success'
+ *   resourceType / resourceId → em qual recurso (ex. 'client' / '42')
+ *   details    → JSON mascarado (use maskPhone, maskEmail antes de gravar)
+ *   success    → 1 = operação bem-sucedida, 0 = falhou
+ *
+ * REGRA: nunca gravar dados sensíveis em `details` sem mascarar antes.
+ * Use as funções de server/lib/environment.ts para mascarar.
+ */
+export const auditLog = mysqlTable('auditLog', {
+  id: bigint('id', { mode: 'number' })
+    .primaryKey()
+    .autoincrement(),
+
+  // Quem realizou a ação (pode ser admin de plataforma, tenant, gestor, técnico ou sistema)
+  actorType: varchar('actorType', { length: 30 }).notNull(),
+
+  // ID do ator — nullable para ações automáticas do sistema (actorType = 'system')
+  actorId: int('actorId'),
+  actorName: varchar('actorName', { length: 200 }),
+
+  // Ação realizada — use ponto para hierarquia: 'tenant.create', 'auth.login.success'
+  action: varchar('action', { length: 100 }).notNull(),
+
+  // Recurso alvo da ação (ex: resourceType='client', resourceId='42')
+  resourceType: varchar('resourceType', { length: 50 }),
+  resourceId: varchar('resourceId', { length: 100 }),
+
+  // Contexto do tenant — nullable para ações de plataforma (ex: criar o tenant em si)
+  tenantId: int('tenantId'),
+
+  // Contexto de rede — IPv6 tem até 45 chars; IPv4 tem 15
+  ipAddress: varchar('ipAddress', { length: 45 }),
+  userAgent: text('userAgent'),
+
+  // Detalhes extras em JSON — OBRIGATÓRIO mascarar dados pessoais antes de gravar
+  details: text('details'),
+
+  // Resultado da operação
+  success: tinyint('success').default(1).notNull(),
+  errorMessage: text('errorMessage'),
+
+  createdAt: timestamp('createdAt').defaultNow().notNull(),
+}, (t) => [
+  // Índices para as consultas mais comuns: "quem fez o quê" e "o que aconteceu com X"
+  index('audit_actor_idx').on(t.actorType, t.actorId),
+  index('audit_action_idx').on(t.action),
+  index('audit_resource_idx').on(t.resourceType, t.resourceId),
+  index('audit_tenant_idx').on(t.tenantId),
+  index('audit_created_idx').on(t.createdAt),
+]);
+
+export type AuditLog = typeof auditLog.$inferSelect;
+export type InsertAuditLog = typeof auditLog.$inferInsert;
+
+/**
+ * Registro de tentativas de login para rate limiting e detecção de ataques.
+ *
+ * Toda tentativa de login (bem-sucedida ou não) deve ser gravada aqui.
+ * O sistema de rate limiting consulta esta tabela para bloquear IPs
+ * ou identificadores com muitas falhas consecutivas.
+ *
+ * Campos importantes:
+ *   identifier   → o que foi digitado no campo de login (username, email ou hash)
+ *   failureReason → por que falhou: invalid_password | user_not_found |
+ *                   account_locked | rate_limited | inactive
+ *   success      → 1 = login bem-sucedido, 0 = falhou
+ *
+ * REGRA: não gravar a senha tentada, nem em campo separado, nem em userAgent.
+ */
+export const loginAttempts = mysqlTable('loginAttempts', {
+  id: bigint('id', { mode: 'number' })
+    .primaryKey()
+    .autoincrement(),
+
+  // Tipo de usuário que tentou logar
+  userType: varchar('userType', { length: 30 }).notNull(),
+  // 'platformAdmin' | 'tenantAdmin' | 'gestor' | 'technician' | 'client'
+
+  // O identificador tentado — pode ser mascarado se sensível
+  identifier: varchar('identifier', { length: 200 }).notNull(),
+
+  // Dados de rede — usados para bloquear IPs atacantes
+  ipAddress: varchar('ipAddress', { length: 45 }).notNull(),
+  userAgent: text('userAgent'),
+
+  // Resultado
+  success: tinyint('success').notNull(),
+  failureReason: varchar('failureReason', { length: 100 }),
+  // Valores válidos: invalid_password | user_not_found | account_locked |
+  //                  rate_limited | inactive
+
+  attemptedAt: timestamp('attemptedAt').defaultNow().notNull(),
+}, (t) => [
+  // Índices para as consultas de rate limiting: "quantas falhas deste IP/identifier?"
+  index('login_identifier_idx').on(t.identifier),
+  index('login_ip_idx').on(t.ipAddress),
+  index('login_attempted_idx').on(t.attemptedAt),
+]);
+
+export type LoginAttempt = typeof loginAttempts.$inferSelect;
+export type InsertLoginAttempt = typeof loginAttempts.$inferInsert;
+
+/**
+ * Log de rastreabilidade das migrações de dados.
+ *
+ * Cada script de migração (ex: '3.7.1d-clients-to-condominiums') deve
+ * gravar um registro por registro migrado, indicando origem, destino e resultado.
+ * Isso permite auditoria completa e rollback cirúrgico se necessário.
+ *
+ * Campos importantes:
+ *   migrationName → nome do script, ex: '3.7.1d-clients-to-condominiums'
+ *   step          → etapa dentro do script, ex: 'migrate_client_42'
+ *   sourceType/Id → de onde veio o dado (ex: 'client' / '42')
+ *   targetType/Id → para onde foi (ex: 'condominium' / '17')
+ *   status        → 'success' | 'skipped' | 'error'
+ *
+ * REGRA: não gravar dados pessoais em `details`. Apenas IDs e metadados.
+ */
+export const migrationAuditLog = mysqlTable('migrationAuditLog', {
+  id: bigint('id', { mode: 'number' })
+    .primaryKey()
+    .autoincrement(),
+
+  // Identificador do script de migração — deve ser único por fase/script
+  migrationName: varchar('migrationName', { length: 200 }).notNull(),
+
+  // Etapa específica dentro do script (permite granularidade por registro)
+  step: varchar('step', { length: 100 }).notNull(),
+
+  // De onde vieram os dados (tabela/entidade de origem + ID)
+  sourceType: varchar('sourceType', { length: 50 }),
+  sourceId: varchar('sourceId', { length: 100 }),
+
+  // Para onde foram os dados (tabela/entidade de destino + ID)
+  targetType: varchar('targetType', { length: 50 }),
+  targetId: varchar('targetId', { length: 100 }),
+
+  // Resultado: success = migrado, skipped = já existia, error = falhou
+  status: varchar('status', { length: 20 }).notNull(),
+
+  // Detalhes adicionais — sem dados pessoais
+  details: text('details'),
+  errorMessage: text('errorMessage'),
+
+  // Quem executou a migração (nome do desenvolvedor ou 'CI/CD')
+  executedBy: varchar('executedBy', { length: 100 }),
+  executedAt: timestamp('executedAt').defaultNow().notNull(),
+}, (t) => [
+  // Índices para consultar "o que fez a migração X" e "o que aconteceu com o client 42"
+  index('migaudit_migration_idx').on(t.migrationName),
+  index('migaudit_source_idx').on(t.sourceType, t.sourceId),
+  index('migaudit_target_idx').on(t.targetType, t.targetId),
+]);
+
+export type MigrationAuditLog = typeof migrationAuditLog.$inferSelect;
+export type InsertMigrationAuditLog = typeof migrationAuditLog.$inferInsert;
