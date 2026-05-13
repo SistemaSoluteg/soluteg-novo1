@@ -134,8 +134,10 @@ export async function getBudgetByToken(token: string) {
     .select({
       id: budgets.id,
       budgetNumber: budgets.budgetNumber,
+      adminId: budgets.adminId,
       clientId: budgets.clientId,
       serviceType: budgets.serviceType,
+      priority: budgets.priority,
       title: budgets.title,
       description: budgets.description,
       scope: budgets.scope,
