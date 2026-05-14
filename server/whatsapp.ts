@@ -3,6 +3,11 @@ const { Client, LocalAuth, MessageMedia } = pkg as any;
 import qrcode from 'qrcode-terminal';
 import QRCode from 'qrcode';
 
+const WHATSAPP_DISABLED = process.env.WHATSAPP_DISABLED === "true";
+if (WHATSAPP_DISABLED) {
+    console.log("[WhatsApp] WHATSAPP_DISABLED=true — serviço desabilitado");
+}
+
 // Configuração do Cliente Puppeteer para VPS
 const client = new Client({
     authStrategy: new LocalAuth({ dataPath: './sessions' }),
@@ -97,7 +102,9 @@ client.on('disconnected', async (reason) => {
 });
 
 // Inicia o serviço
-client.initialize();
+if (!WHATSAPP_DISABLED) {
+    client.initialize();
+}
 
 /**
  * Retorna o status atual da conexão WhatsApp
@@ -111,6 +118,10 @@ export const getWhatsappStatus = () => ({
  * Reconecta o cliente WhatsApp manualmente (útil pelo painel admin)
  */
 export const reconnectWhatsapp = async () => {
+    if (WHATSAPP_DISABLED) {
+        console.log("[WhatsApp] Envio ignorado (WHATSAPP_DISABLED=true)");
+        return;
+    }
     console.log('🔄 Reconexão manual solicitada via painel...');
     isReady = false;
     lastQrDataUrl = null;
@@ -129,6 +140,10 @@ export const reconnectWhatsapp = async () => {
  * Envia mensagem para um número específico (ex: cliente)
  */
 export const sendWhatsappToNumber = async (phone: string, message: string) => {
+    if (WHATSAPP_DISABLED) {
+        console.log("[WhatsApp] Envio ignorado (WHATSAPP_DISABLED=true)");
+        return;
+    }
     if (!isReady) {
         // Lança erro para que o chamador possa registrar a falha e acionar retry/fallback
         throw new Error("WhatsApp não está conectado");
@@ -156,6 +171,10 @@ export const sendWhatsappToNumber = async (phone: string, message: string) => {
  * Envia mensagem + PDF para um número específico (ex: cliente)
  */
 export const sendWhatsappToNumberWithPDF = async (phone: string, message: string, pdfBuffer: Buffer, filename: string) => {
+    if (WHATSAPP_DISABLED) {
+        console.log("[WhatsApp] Envio ignorado (WHATSAPP_DISABLED=true)");
+        return;
+    }
     if (!isReady) {
         console.error('❌ ERRO: Zap não está pronto para envio ao cliente.');
         return;
@@ -183,6 +202,10 @@ export const sendWhatsappToNumberWithPDF = async (phone: string, message: string
  * Função exportada para enviar alertas de OS do sistema
  */
 export const sendWhatsappAlert = async (message: string) => {
+    if (WHATSAPP_DISABLED) {
+        console.log("[WhatsApp] Envio ignorado (WHATSAPP_DISABLED=true)");
+        return;
+    }
     console.log(`--- GATILHO: Buscando identificador real para JNC ---`);
     
     if (!isReady) {
@@ -221,6 +244,10 @@ export const sendWhatsappAlert = async (message: string) => {
  * Envia alerta + PDF para o admin (JNC)
  */
 export const sendWhatsappAlertWithPDF = async (message: string, pdfBuffer: Buffer, filename: string) => {
+    if (WHATSAPP_DISABLED) {
+        console.log("[WhatsApp] Envio ignorado (WHATSAPP_DISABLED=true)");
+        return;
+    }
     if (!isReady) {
         console.error('❌ ERRO: Zap não está pronto.');
         return;
