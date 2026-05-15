@@ -37,7 +37,9 @@
       "Bash(git add:*)",
       "Bash(git commit -m ':*)",
       "Bash(git push:*)",
-      "Bash(ls -la drizzle/0030_*.sql drizzle/0031_*.sql drizzle/0032_*.sql drizzle/0033_*.sql drizzle/0034_*.sql drizzle/0035_*.sql drizzle/0036_*.sql)"
+      "Bash(ls -la drizzle/0030_*.sql drizzle/0031_*.sql drizzle/0032_*.sql drizzle/0033_*.sql drizzle/0034_*.sql drizzle/0035_*.sql drizzle/0036_*.sql)",
+      "Bash(grep -n 'workOrders\\\\s*=\\\\|workOrders.*table\\\\|osNumber\\\\|adminId\\\\|clientId\\\\|serviceType\\\\|NOT NULL\\\\|notNull\\\\|$default\\\\|default\\(' drizzle/schema.ts)",
+      "Bash(git commit -m ' *)"
     ],
     "additionalDirectories": [
       "c:\\Users\\thiag\\.claude\\projects\\c--Users-thiag-OneDrive-Documentos-GitHub-soluteg-novo1\\memory"
