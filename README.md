@@ -51,7 +51,7 @@ Documentos antigos mantidos para referência. Não são mais atualizados.
 ### Setup local
 
 ```bash
-git clone https://github.com/JncBombas/soluteg-novo1.git
+git clone https://github.com/SistemaSoluteg/soluteg-novo1
 cd soluteg-novo1
 pnpm install
 cp .env.example .env  # criar manualmente, ver variáveis no ARCHITECTURE_HANDOFF.md seção 13.4

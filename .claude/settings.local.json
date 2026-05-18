@@ -22,7 +22,14 @@
       "Bash(git commit -m 'fix\\(dashboard\\): corrige React error #310 — hooks chamados após return condicional *)",
       "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\thiag\\\\OneDrive\\\\Documentos\\\\GitHub\\\\soluteg-novo1\\\\src\\\\pages\\\\\" -Force)",
       "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\thiag\\\\OneDrive\\\\Documentos\\\\GitHub\\\\soluteg-novo1\\\\src\\\\pages\" -Name | Where-Object { $_ -match 'Tech|tech' })",
-      "PowerShell(cd \"c:\\\\Users\\\\thiag\\\\OneDrive\\\\Documentos\\\\GitHub\\\\soluteg-novo1\"; [System.IO.File]::ReadAllText\\(\"dist\\\\manifest.webmanifest\", [System.Text.Encoding]::UTF8\\))"
+      "PowerShell(cd \"c:\\\\Users\\\\thiag\\\\OneDrive\\\\Documentos\\\\GitHub\\\\soluteg-novo1\"; [System.IO.File]::ReadAllText\\(\"dist\\\\manifest.webmanifest\", [System.Text.Encoding]::UTF8\\))",
+      "Bash(pnpm drizzle-kit *)",
+      "PowerShell(Get-Command pnpm -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-Command npx -ErrorAction SilentlyContinue)",
+      "Bash(mysql -h 69.6.213.57 -u d5ea2e96_jnc_sistema -pd5ea2e96d5ea2e96d5ea2e96 d5ea2e96_tst -e \"SELECT 1;\")",
+      "PowerShell(Get-Command mysql -ErrorAction SilentlyContinue)",
+      "Bash(node -e \"require\\('mysql2'\\)\")",
+      "Bash(node -e ' *)"
     ]
   }
 }
