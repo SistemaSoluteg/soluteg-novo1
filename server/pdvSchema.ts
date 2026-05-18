@@ -2,6 +2,7 @@ import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, boolean 
 
 export const categories = mysqlTable("categories", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   name: varchar("name", { length: 100 }).notNull(),
   description: text("description"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -10,6 +11,7 @@ export const categories = mysqlTable("categories", {
 
 export const products = mysqlTable("products", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   barcode: varchar("barcode", { length: 13 }).notNull().unique(),
   name: varchar("name", { length: 255 }).notNull(),
   description: text("description"),
@@ -28,6 +30,7 @@ export const products = mysqlTable("products", {
 
 export const sales = mysqlTable("sales", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   total: decimal("total", { precision: 10, scale: 2 }).notNull(),
   discount: decimal("discount", { precision: 10, scale: 2 }).default("0.00"),
   discountType: mysqlEnum("discountType", ["percentage", "fixed"]).default("fixed"),
@@ -44,6 +47,7 @@ export const sales = mysqlTable("sales", {
 
 export const saleItems = mysqlTable("saleItems", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   saleId: int("saleId").notNull(),
   productId: int("productId").notNull(),
   productName: varchar("productName", { length: 255 }).notNull(),
@@ -55,6 +59,7 @@ export const saleItems = mysqlTable("saleItems", {
 
 export const cashTransactions = mysqlTable("cashTransactions", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   type: mysqlEnum("type", ["entrada", "saida"]).notNull(),
   amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
   description: text("description").notNull(),
@@ -65,6 +70,7 @@ export const cashTransactions = mysqlTable("cashTransactions", {
 
 export const customers = mysqlTable("customers", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   name: varchar("name", { length: 255 }).notNull(),
   cpfCnpj: varchar("cpfCnpj", { length: 18 }),
   phone: varchar("phone", { length: 20 }),

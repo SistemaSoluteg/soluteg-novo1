@@ -30,6 +30,7 @@ export type InsertUser = typeof users.$inferInsert;
  */
 export const reports = mysqlTable("reports", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   userId: int("userId").notNull(),
   title: varchar("title", { length: 255 }).notNull(),
   clientName: varchar("clientName", { length: 255 }).notNull(),
@@ -55,6 +56,7 @@ export type InsertReport = typeof reports.$inferInsert;
  */
 export const invites = mysqlTable("invites", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   email: varchar("email", { length: 320 }).notNull().unique(),
   code: varchar("code", { length: 255 }).notNull().unique(),
   role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
@@ -92,6 +94,7 @@ export type InsertAdmin = typeof admins.$inferInsert;
  */
 export const inspectionReports = mysqlTable("inspectionReports", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   adminId: int("adminId").notNull(),
   clientName: varchar("clientName", { length: 255 }).notNull(),
   clientAddress: text("clientAddress").notNull(),
@@ -165,6 +168,7 @@ export type InsertInspectionReport = typeof inspectionReports.$inferInsert;
  */
 export const clients = mysqlTable("clients", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   adminId: int("adminId").notNull(), // Admin que criou o cliente
   name: varchar("name", { length: 255 }).notNull(),
   email: varchar("email", { length: 320 }),
@@ -190,6 +194,7 @@ export type InsertClient = typeof clients.$inferInsert;
  */
 export const technicians = mysqlTable("technicians", {
   id:             int("id").autoincrement().primaryKey(),
+  tenantId:       int("tenantId"),
   adminId:        int("adminId").notNull(),
   name:           varchar("name", { length: 255 }).notNull(),
   email:          varchar("email", { length: 320 }),
@@ -212,6 +217,7 @@ export type InsertTechnician = typeof technicians.$inferInsert;
  */
 export const clientDocuments = mysqlTable("clientDocuments", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   clientId: int("clientId").notNull(),
   adminId: int("adminId").notNull(), // Admin que fez upload
   title: varchar("title", { length: 255 }).notNull(), // Nome do documento
@@ -235,6 +241,7 @@ export type InsertClientDocument = typeof clientDocuments.$inferInsert;
  */
 export const workOrders = mysqlTable("workOrders", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   adminId: int("adminId").notNull(),
   clientId: int("clientId").notNull(),
   osNumber: varchar("osNumber", { length: 50 }).notNull().unique(),
@@ -321,6 +328,7 @@ export type InsertWorkOrder = typeof workOrders.$inferInsert;
  */
 export const workOrderHistory = mysqlTable("workOrderHistory", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   workOrderId: int("workOrderId").notNull(),
   changedBy: varchar("changedBy", { length: 100 }).notNull(),
   changedByType: mysqlEnum("changedByType", ["admin", "client", "technician"]).notNull(),
@@ -338,6 +346,7 @@ export type InsertWorkOrderHistory = typeof workOrderHistory.$inferInsert;
  */
 export const workOrderTasks = mysqlTable("workOrderTasks", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   workOrderId: int("workOrderId").notNull(),
   title: varchar("title", { length: 255 }).notNull(),
   description: text("description"),
@@ -356,6 +365,7 @@ export type InsertWorkOrderTask = typeof workOrderTasks.$inferInsert;
  */
 export const workOrderMaterials = mysqlTable("workOrderMaterials", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   workOrderId: int("workOrderId").notNull(),
   materialName: varchar("materialName", { length: 255 }).notNull(),
   quantity: int("quantity").notNull(),
@@ -374,6 +384,7 @@ export type InsertWorkOrderMaterial = typeof workOrderMaterials.$inferInsert;
  */
 export const workOrderAttachments = mysqlTable("workOrderAttachments", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   workOrderId: int("workOrderId").notNull(),
   fileName: varchar("fileName", { length: 255 }).notNull(),
   fileKey: text("fileKey").notNull(), // Chave S3
@@ -394,6 +405,7 @@ export type InsertWorkOrderAttachment = typeof workOrderAttachments.$inferInsert
  */
 export const workOrderComments = mysqlTable("workOrderComments", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   workOrderId: int("workOrderId").notNull(),
   userId: varchar("userId", { length: 100 }).notNull(),
   userType: mysqlEnum("userType", ["admin", "client"]).notNull(),
@@ -410,6 +422,7 @@ export type InsertWorkOrderComment = typeof workOrderComments.$inferInsert;
  */
 export const workOrderTimeTracking = mysqlTable("workOrderTimeTracking", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   workOrderId: int("workOrderId").notNull(),
   userId: varchar("userId", { length: 100 }).notNull(),
   startedAt: timestamp("startedAt").notNull(),
@@ -446,6 +459,7 @@ export type InsertChecklistTemplate = typeof checklistTemplates.$inferInsert;
  */
 export const inspectionTasks = mysqlTable("inspectionTasks", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   workOrderId: int("workOrderId").notNull(),
   title: varchar("title", { length: 255 }).notNull(), // Ex: "Inspeção Mensal"
   description: text("description"),
@@ -471,6 +485,7 @@ export type InsertInspectionTask = typeof inspectionTasks.$inferInsert;
  */
 export const checklistInstances = mysqlTable("checklistInstances", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   inspectionTaskId: int("inspectionTaskId").notNull(),
   templateId: int("templateId").notNull(),
   
@@ -497,6 +512,7 @@ export type InsertChecklistInstance = typeof checklistInstances.$inferInsert;
  */
 export const waterTankMonitoring = mysqlTable("waterTankMonitoring", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   clientId: int("clientId").notNull(),
   adminId: int("adminId").notNull(),
   tankName: varchar("tankName", { length: 100 }).notNull(), // Nome da caixa (ex: Torre A, Reservatório Inferior)
@@ -521,6 +537,7 @@ export type InsertWaterTankMonitoring = typeof waterTankMonitoring.$inferInsert;
  */
 export const waterTankSensors = mysqlTable("waterTankSensors", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   deviceId: varchar("deviceId", { length: 100 }).unique(), // ID físico do sensor (ex: MAC ou string curta)
   // NULL enquanto pendente (não atribuído a nenhum cliente)
   clientId: int("clientId"),
@@ -553,6 +570,7 @@ export type InsertWaterTankSensor = typeof waterTankSensors.$inferInsert;
  */
 export const waterTankAlertLog = mysqlTable("waterTankAlertLog", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   sensorId: int("sensorId").notNull(),
   clientId: int("clientId").notNull(),
   tankName: varchar("tankName", { length: 100 }).notNull(),
@@ -574,6 +592,7 @@ export const waterTankAlertLog = mysqlTable("waterTankAlertLog", {
  */
 export const waterTankFaultLog = mysqlTable("waterTankFaultLog", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   sensorId: int("sensorId").notNull(),
   clientId: int("clientId").notNull(),
   tankName: varchar("tankName", { length: 100 }).notNull(),
@@ -595,6 +614,7 @@ export type InsertWaterTankFaultLog = typeof waterTankFaultLog.$inferInsert;
  */
 export const budgets = mysqlTable("budgets", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   adminId: int("adminId").notNull(),
   clientId: int("clientId").notNull(),
   budgetNumber: varchar("budgetNumber", { length: 50 }).notNull().unique(), // ORC-YYYY-NNNN
@@ -667,6 +687,7 @@ export type InsertBudget = typeof budgets.$inferInsert;
  */
 export const budgetItems = mysqlTable("budgetItems", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   budgetId: int("budgetId").notNull(),
   description: varchar("description", { length: 255 }).notNull(),
   quantity: int("quantity").notNull().default(1), // em centésimos (ex: 150 = 1,50)
@@ -685,6 +706,7 @@ export type InsertBudgetItem = typeof budgetItems.$inferInsert;
  */
 export const budgetHistory = mysqlTable("budgetHistory", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   budgetId: int("budgetId").notNull(),
   changedBy: varchar("changedBy", { length: 100 }).notNull(),
   changedByType: mysqlEnum("changedByType", ["admin", "client"]).notNull(),
@@ -704,6 +726,7 @@ export type InsertBudgetHistory = typeof budgetHistory.$inferInsert;
  */
 export const budgetAttachments = mysqlTable("budgetAttachments", {
   id:         int("id").autoincrement().primaryKey(),
+  tenantId:   int("tenantId"),
   budgetId:   int("budgetId").notNull(),
   fileName:   varchar("fileName", { length: 255 }).notNull(),
   fileKey:    text("fileKey").notNull(),
@@ -750,6 +773,7 @@ export type InsertLaudoTipo = typeof laudoTipos.$inferInsert;
  */
 export const laudos = mysqlTable("laudos", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   numero: varchar("numero", { length: 20 }).notNull().unique(),
   /** Código textual do tipo — migrado de enum para text; compatível com laudoTipos.codigo */
   tipo: text("tipo").notNull(),
@@ -785,6 +809,7 @@ export type InsertLaudo = typeof laudos.$inferInsert;
  */
 export const laudoFotos = mysqlTable("laudoFotos", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   laudoId: int("laudoId").notNull(),
   url: text("url").notNull(),
   legenda: text("legenda"),
@@ -810,6 +835,7 @@ export type InsertLaudoFoto = typeof laudoFotos.$inferInsert;
  */
 export const laudoMedicoes = mysqlTable("laudoMedicoes", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   laudoId: int("laudoId").notNull(),
   descricao: text("descricao").notNull(),
   unidade: varchar("unidade", { length: 30 }),
@@ -827,6 +853,7 @@ export type InsertLaudoMedicao = typeof laudoMedicoes.$inferInsert;
  */
 export const configuracoesTecnico = mysqlTable("configuracoesTecnico", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   nomeCompleto: varchar("nomeCompleto", { length: 255 }),
   registroCrt: varchar("registroCrt", { length: 100 }),
   especialidade: varchar("especialidade", { length: 150 }),
@@ -843,6 +870,7 @@ export type InsertConfiguracoesTecnico = typeof configuracoesTecnico.$inferInser
  */
 export const laudoTecnicos = mysqlTable("laudoTecnicos", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   laudoId: int("laudoId").notNull(),
   tecnicoId: int("tecnicoId").notNull(),
   atribuidoEm: timestamp("atribuidoEm").defaultNow().notNull(),
@@ -902,6 +930,7 @@ export type InsertNormaTrecho = typeof normaTrechos.$inferInsert;
  */
 export const laudoCitacoes = mysqlTable("laudoCitacoes", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),
   laudoId: int("laudoId").notNull(),
   // FK opcional para biblioteca — null quando citação é manual
   trechoId: int("trechoId"),
@@ -934,6 +963,7 @@ export type InsertLaudoCitacao = typeof laudoCitacoes.$inferInsert;
  */
 export const pushSubscriptions = mysqlTable("pushSubscriptions", {
   id:        int("id").autoincrement().primaryKey(),
+  tenantId:  int("tenantId"),
   // ID do cliente ou técnico — NUNCA aceitar do input, sempre do ctx JWT
   userId:    int("userId").notNull(),
   // Diferencia cliente de técnico no lookup
@@ -976,6 +1006,7 @@ export type InsertPushSubscription = typeof pushSubscriptions.$inferInsert;
  */
 export const notificationLogs = mysqlTable("notificationLogs", {
   id:               int("id").autoincrement().primaryKey(),
+  tenantId:         int("tenantId"),
   userId:           int("userId").notNull(),
   userType:         mysqlEnum("userType", ["client", "technician", "admin"]).notNull(),
   // Qual evento gerou esta notificação
@@ -1366,6 +1397,7 @@ export type InsertCondominium = typeof condominiums.$inferInsert;
  */
 export const notificationContacts = mysqlTable('notificationContacts', {
   id:            int('id').autoincrement().primaryKey(),
+  tenantId:      int('tenantId'),
 
   // FK para condomínio — sem CASCADE
   condominiumId: int('condominiumId').notNull().references(() => condominiums.id),
