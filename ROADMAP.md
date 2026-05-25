@@ -140,6 +140,16 @@ Adiado deliberadamente: não faz sentido investir tempo numa landing comercial a
 
 ---
 
+## 💡 Ideias futuras (não comprometidas)
+
+Estas ideias estão documentadas mas **não estão no roadmap ativo**. Vão à mesa quando os critérios definidos em cada documento forem atendidos.
+
+| Ideia | Documento | Critério para reativar |
+|-------|-----------|------------------------|
+| Módulo Financeiro completo (ERP integrado: boletos, NFs, plano de contas, dashboard, PDV) | [`docs/futuro/MODULO_FINANCEIRO.md`](./docs/futuro/MODULO_FINANCEIRO.md) | Após Fase 4 com 3+ clientes pagantes ativos |
+
+---
+
 ## ❌ Decisões explícitas de NÃO fazer (por enquanto)
 
 - App nativo mobile (React Native, Expo) — PWA atende o caso técnico
