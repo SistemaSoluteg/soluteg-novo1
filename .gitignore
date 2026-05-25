@@ -105,6 +105,5 @@ temp/
 *.db
 *.sqlite
 *.sqlite3
-CLLAUDE.md
 # Claude Code (configurações locais que mudam constantemente)
 .claude/
