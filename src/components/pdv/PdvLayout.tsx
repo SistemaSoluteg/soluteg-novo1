@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, CSSProperties } from "react";
 import { useLocation } from "wouter";
+import { trpc } from "@/lib/trpc";
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarHeader,
   SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem,
@@ -37,6 +38,8 @@ export default function PdvLayout({ children }: { children: React.ReactNode }) {
     return saved ? parseInt(saved, 10) : DEFAULT_WIDTH;
   });
 
+  const logoutMutation = trpc.adminAuth.logout.useMutation();
+
   // Verifica se o admin está autenticado (mesmo padrão das páginas /gestor/*)
   useEffect(() => {
     const id = localStorage.getItem("adminId");
@@ -52,10 +55,16 @@ export default function PdvLayout({ children }: { children: React.ReactNode }) {
     localStorage.setItem(SIDEBAR_WIDTH_KEY, sidebarWidth.toString());
   }, [sidebarWidth]);
 
-  const handleLogout = () => {
-    localStorage.removeItem("adminId");
-    localStorage.removeItem("adminName");
-    setLocation("/gestor/login");
+  const handleLogout = async () => {
+    try {
+      await logoutMutation.mutateAsync();
+    } catch {
+      // ignora falha de rede — cookie expirará naturalmente pelo JWT
+    } finally {
+      localStorage.removeItem("adminId");
+      localStorage.removeItem("adminName");
+      setLocation("/gestor/login?redirect=/pdv");
+    }
   };
 
   return (
@@ -76,7 +85,7 @@ function PdvLayoutContent({
   children: React.ReactNode;
   setSidebarWidth: (w: number) => void;
   adminName: string;
-  onLogout: () => void;
+  onLogout: () => void | Promise<void>;
 }) {
   const [location, setLocation] = useLocation();
   const { state, toggleSidebar } = useSidebar();

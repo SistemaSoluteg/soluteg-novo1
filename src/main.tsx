@@ -40,6 +40,8 @@ const redirectToLoginIfUnauthorized = (error: unknown) => {
     window.location.href = "/technician/login";
   } else if (path.startsWith("/client")) {
     window.location.href = "/client/login";
+  } else if (path.startsWith("/pdv")) {
+    window.location.href = "/gestor/login?redirect=/pdv";
   } else {
     window.location.href = getLoginUrl();
   }
