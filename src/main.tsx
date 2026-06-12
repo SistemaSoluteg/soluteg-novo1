@@ -23,7 +23,20 @@ registerSW({
   },
 });
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      // Considera os dados "frescos" por 30s — evita refetch redundante.
+      staleTime: 30_000,
+      // Não refazer todas as consultas a cada vez que a janela ganha foco.
+      // No PDV o operador alterna muito de janela; o refetch em foco
+      // disparava rajadas de consultas pesadas e travava a tela.
+      refetchOnWindowFocus: false,
+      // Uma tentativa extra em caso de falha (em vez do default de 3).
+      retry: 1,
+    },
+  },
+});
 
 // Redireciona para a tela de login correta conforme o portal atual.
 // Sem isso, qualquer 401 manda o técnico para /gestor/login (fora do
