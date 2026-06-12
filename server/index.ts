@@ -806,9 +806,10 @@ async function startServer() {
 
   // ============================================================
   // ▶️ INICIA O SERVIDOR
-  // Porta 3000 | Aceita conexões de qualquer IP (0.0.0.0)
+  // Porta lida do ambiente (.env). Em produção sem PORT no .env,
+  // cai no padrão 3000. Em staging, PORT=3001 no .env é respeitado.
   // ============================================================
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
   server.listen(PORT, "0.0.0.0", () => {
     console.log("=========================================");
     console.log(`🚀 SERVIDOR SOLUTEG RODANDO`);
