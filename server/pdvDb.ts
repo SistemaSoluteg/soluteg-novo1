@@ -3,7 +3,7 @@
 // Tabelas: categories, products, sales, saleItems,
 //          cashTransactions, customers
 // ============================================================
-import { eq, desc, and, gte, lte, sql, asc } from "drizzle-orm";
+import { eq, desc, and, gte, lte, lt, sql, asc } from "drizzle-orm";
 import { getDb } from "./db";
 
 async function getPdvDb() {
@@ -257,41 +257,34 @@ export async function getCashBalance() {
 export async function getDashboardStats() {
   const db = await getPdvDb();
 
-  // Buscar TODAS as vendas para filtrar em JS (evita problemas de timezone do MySQL)
-  const allSales = await db.select({
-    id: sales.id,
-    total: sales.total,
-    canceled: sales.canceled,
-    createdAt: sales.createdAt,
-  }).from(sales).orderBy(desc(sales.createdAt));
-
-  // Data de hoje em BRT (UTC-3)
+  // Limites do dia de "hoje" no fuso America/Sao_Paulo. Calculamos no Node e
+  // filtramos no SQL — assim NÃO baixamos a tabela de vendas inteira. Como a
+  // coluna é TIMESTAMP (instante), 00:00 BRT equivale a 03:00 UTC; o intervalo
+  // [startOfDay, endOfDay) seleciona exatamente as mesmas vendas que a antiga
+  // comparação de data feita em JS.
+  //
+  // PREMISSA: BRT = UTC-3 fixo (horário de verão abolido em 2019); revisar se o
+  // DST voltar. Derivamos a data-calendário subtraindo 3h ANTES de extrair o
+  // YYYY-MM-DD — senão, entre 21:00 e 23:59 BRT, o UTC já estaria no dia seguinte
+  // e "Vendas Hoje" mostraria o dia errado bem na hora do fechamento do caixa.
   const now = new Date();
   const brtNow = new Date(now.getTime() - 3 * 60 * 60 * 1000);
   const todayStr = brtNow.toISOString().split("T")[0]; // "YYYY-MM-DD" em BRT
+  const startOfDay = new Date(`${todayStr}T03:00:00.000Z`); // 00:00 BRT
+  const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000); // 00:00 BRT do dia seguinte
 
-  console.log("[PDV Dashboard] Total de vendas no banco:", allSales.length);
-  console.log("[PDV Dashboard] Data hoje (BRT):", todayStr);
-  console.log("[PDV Dashboard] NOW JS:", now.toISOString());
-  if (allSales.length > 0) {
-    console.log("[PDV Dashboard] Últimas 3 vendas:", JSON.stringify(allSales.slice(0, 3)));
-  }
-
-  // Filtrar vendas de hoje (comparando a data em BRT)
-  const todaysSales = allSales.filter((s) => {
-    if (s.canceled) return false; // ignorar canceladas
-    const saleDate = new Date(s.createdAt);
-    const saleBRT = new Date(saleDate.getTime() - 3 * 60 * 60 * 1000);
-    const saleDateStr = saleBRT.toISOString().split("T")[0];
-    return saleDateStr === todayStr;
-  });
-
-  const todayTotal = todaysSales.reduce((sum, s) => sum + Number(s.total || 0), 0);
-  const todayCount = todaysSales.length;
-
-  console.log("[PDV Dashboard] Vendas hoje filtradas:", todayCount, "| Total:", todayTotal);
-
-  const [lowStock, topProducts, balance] = await Promise.all([
+  const [todayAgg, lowStock, topProducts, balance] = await Promise.all([
+    // Total e contagem das vendas de hoje (ignorando canceladas), agregados no SQL.
+    db.select({
+      total: sql<string | null>`SUM(${sales.total})`,
+      count: sql<number>`COUNT(*)`,
+    }).from(sales).where(
+      and(
+        gte(sales.createdAt, startOfDay),
+        lt(sales.createdAt, endOfDay),
+        eq(sales.canceled, false),
+      )
+    ),
     getLowStockProducts(),
     db.select({
       productId: saleItems.productId,
@@ -304,6 +297,9 @@ export async function getDashboardStats() {
       .limit(10),
     getCashBalance(),
   ]);
+
+  const todayTotal = Number(todayAgg[0]?.total ?? 0);
+  const todayCount = Number(todayAgg[0]?.count ?? 0);
 
   return {
     todaySales: { total: todayTotal, count: todayCount },
