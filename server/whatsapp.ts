@@ -96,8 +96,10 @@ client.on('disconnected', async (reason) => {
     }, 15000);
 });
 
-// Inicia o serviço
-client.initialize();
+// Inicia o serviço (desabilitado em dev via WHATSAPP_DISABLED=true no .env)
+if (process.env.WHATSAPP_DISABLED !== 'true') {
+  client.initialize();
+}
 
 /**
  * Retorna o status atual da conexão WhatsApp

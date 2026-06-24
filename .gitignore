@@ -107,3 +107,6 @@ temp/
 *.sqlite3
 # Claude Code (configurações locais que mudam constantemente)
 .claude/
+
+# Sessão do Chromium gerada pelo whatsapp-web.js (dados do browser interno)
+sessions/
