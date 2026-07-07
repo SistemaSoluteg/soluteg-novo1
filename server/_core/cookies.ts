@@ -39,10 +39,14 @@ export function getSessionCookieOptions(
   //       ? hostname
   //       : undefined;
 
+  const secure = isSecureRequest(req);
+
   return {
     httpOnly: true,
     path: "/",
-    sameSite: "none",
-    secure: isSecureRequest(req),
+    // SameSite=None exige Secure=true (exigência dos navegadores modernos).
+    // Em HTTP local usamos "lax" para o cookie ser aceito.
+    sameSite: secure ? "none" : "lax",
+    secure,
   };
 }

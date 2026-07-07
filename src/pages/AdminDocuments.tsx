@@ -1,34 +1,15 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
-import { Upload, FileUp, Loader2, AlertCircle, CheckCircle, ChevronDown, ChevronRight, FileText, Download, Eye } from "lucide-react";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { useLocation } from "wouter";
+import { Upload, FileUp, Loader2, ChevronDown, ChevronRight, FileText, Download, Eye } from "lucide-react";
 import DashboardLayout from "@/components/DashboardLayout";
+import { trpc } from "@/lib/trpc";
+import { toast } from "sonner";
 
-interface Client {
-  id: number;
-  name: string;
-  email: string;
-}
-
-interface Document {
-  id: number;
-  title: string;
-  description?: string;
-  documentType: string;
-  month: number;
-  year: number;
-  fileName: string;
-  mimeType: string;
-  createdAt: string;
-  fileUrl?: string;
-}
-
+// Nomes dos meses em português (índice 0 não é usado)
 const MONTH_NAMES = [
   "", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
   "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
@@ -51,18 +32,13 @@ const DOC_TYPE_COLORS: Record<string, string> = {
 };
 
 export default function AdminDocuments() {
-  const [, navigate] = useLocation();
-  const [adminId, setAdminId] = useState<number | null>(null);
-  const [clients, setClients] = useState<Client[]>([]);
+  // ID do cliente expandido atualmente (para mostrar seus documentos)
   const [expandedClientId, setExpandedClientId] = useState<number | null>(null);
-  const [clientDocuments, setClientDocuments] = useState<Record<number, Document[]>>({});
-  const [loadingDocs, setLoadingDocs] = useState<Record<number, boolean>>({});
+
+  // Estado do formulário de upload
   const [selectedClientId, setSelectedClientId] = useState<string>("");
-  const [loading, setLoading] = useState(true);
-  const [uploading, setUploading] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+  const [uploading, setUploading] = useState(false);
   const [formData, setFormData] = useState({
     title: "",
     description: "",
@@ -72,174 +48,105 @@ export default function AdminDocuments() {
     year: new Date().getFullYear(),
   });
 
-  useEffect(() => {
-    const id = localStorage.getItem("adminId");
-    if (id) {
-      setAdminId(parseInt(id));
-      loadClients(parseInt(id));
-    }
-  }, []);
+  // Busca a lista de todos os clientes via tRPC
+  const { data: clients = [], isLoading: loadingClients } = trpc.clients.list.useQuery(undefined);
 
-  const loadClients = async (id: number) => {
-    try {
-      setLoading(true);
-      const response = await fetch(`/api/admin-clients?adminId=${id}`);
-      if (response.ok) {
-        const data = await response.json();
-        setClients(data);
-      }
-    } catch (error) {
-      console.error("Erro ao carregar clientes:", error);
-      setError("Erro ao carregar clientes");
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Busca documentos do cliente expandido — só executa quando há um expandido
+  const { data: expandedDocs = [], isFetching: loadingDocs, refetch: refetchDocs } =
+    trpc.documents.listAll.useQuery(
+      { clientId: expandedClientId ?? undefined },
+      { enabled: expandedClientId !== null }
+    );
 
-  const loadClientDocuments = async (clientId: number) => {
-    if (clientDocuments[clientId]) return; // already loaded
-    try {
-      setLoadingDocs((prev) => ({ ...prev, [clientId]: true }));
-      const response = await fetch(`/api/admin-documents?clientId=${clientId}&adminId=${adminId}`);
-      if (response.ok) {
-        const data = await response.json();
-        setClientDocuments((prev) => ({ ...prev, [clientId]: data }));
-      } else {
-        setClientDocuments((prev) => ({ ...prev, [clientId]: [] }));
-      }
-    } catch (error) {
-      console.error("Erro ao carregar documentos:", error);
-      setClientDocuments((prev) => ({ ...prev, [clientId]: [] }));
-    } finally {
-      setLoadingDocs((prev) => ({ ...prev, [clientId]: false }));
-    }
-  };
+  // Mutation para salvar metadados do documento após o upload do arquivo
+  const createDocument = trpc.documents.create.useMutation({
+    onSuccess: () => {
+      toast.success("Documento enviado com sucesso!");
+      refetchDocs();
+      setFormData({
+        title: "",
+        description: "",
+        documentType: "vistoria",
+        file: null,
+        month: new Date().getMonth() + 1,
+        year: new Date().getFullYear(),
+      });
+      setSelectedClientId("");
+      setIsOpen(false);
+      const fileInput = document.getElementById("file-input") as HTMLInputElement;
+      if (fileInput) fileInput.value = "";
+    },
+    onError: (err) => {
+      toast.error(`Erro ao salvar documento: ${err.message}`);
+    },
+  });
 
   const handleToggleClient = (clientId: number) => {
-    if (expandedClientId === clientId) {
-      setExpandedClientId(null);
-    } else {
-      setExpandedClientId(clientId);
-      loadClientDocuments(clientId);
-    }
+    setExpandedClientId((prev) => (prev === clientId ? null : clientId));
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      setFormData({ ...formData, file });
-    }
+    if (file) setFormData((prev) => ({ ...prev, file }));
   };
 
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
-    setSuccess("");
 
-    if (!adminId || !selectedClientId || !formData.file || !formData.title) {
-      setError("Preencha todos os campos obrigatórios");
+    if (!selectedClientId || !formData.file || !formData.title) {
+      toast.error("Preencha todos os campos obrigatórios");
       return;
     }
 
     try {
       setUploading(true);
 
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        try {
-          const fileBase64 = event.target?.result as string;
-          const base64Data = fileBase64.split(",")[1];
-          const file = formData.file!;
+      // Passo 1: envia o arquivo para o Cloudinary via endpoint de upload
+      const fd = new FormData();
+      fd.append("files", formData.file);
+      const res = await fetch("/api/work-orders/upload", { method: "POST", body: fd });
+      if (!res.ok) throw new Error("Falha no upload do arquivo");
 
-          const response = await fetch("/api/admin-documents/upload", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              clientId: parseInt(selectedClientId),
-              adminId,
-              title: formData.title,
-              description: formData.description,
-              documentType: formData.documentType,
-              month: formData.month,
-              year: formData.year,
-              fileBase64: base64Data,
-              fileName: file.name,
-              mimeType: file.type,
-            }),
-          });
+      const { urls } = await res.json();
+      const uploaded = urls[0];
 
-          if (!response.ok) {
-            const data = await response.json();
-            throw new Error(data.message || "Erro ao fazer upload");
-          }
-
-          const result = await response.json();
-
-          setSuccess("Documento enviado com sucesso!");
-          setFormData({
-            title: "",
-            description: "",
-            documentType: "vistoria",
-            file: null,
-            month: new Date().getMonth() + 1,
-            year: new Date().getFullYear(),
-          });
-
-          const clientId = parseInt(selectedClientId);
-
-          // Refresh documents for that client
-          setClientDocuments((prev) => {
-            const updated = { ...prev };
-            delete updated[clientId];
-            return updated;
-          });
-
-          // If client is expanded, reload its docs
-          if (expandedClientId === clientId) {
-            loadClientDocuments(clientId);
-          }
-
-          setSelectedClientId("");
-          setIsOpen(false);
-
-          const fileInput = document.getElementById("file-input") as HTMLInputElement;
-          if (fileInput) fileInput.value = "";
-
-          setTimeout(() => setSuccess(""), 4000);
-        } catch (err) {
-          setError(err instanceof Error ? err.message : "Erro ao fazer upload");
-        } finally {
-          setUploading(false);
-        }
-      };
-
-      reader.onerror = () => {
-        setError("Erro ao ler o arquivo");
-        setUploading(false);
-      };
-
-      reader.readAsDataURL(formData.file);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao fazer upload");
+      // Passo 2: salva os metadados via tRPC
+      await createDocument.mutateAsync({
+        clientId: parseInt(selectedClientId),
+        title: formData.title,
+        description: formData.description || undefined,
+        documentType: formData.documentType as any,
+        fileUrl: uploaded.url,
+        fileKey: uploaded.key,
+        fileSize: uploaded.fileSize,
+        mimeType: uploaded.fileType,
+        month: formData.month,
+        year: formData.year,
+      });
+    } catch (err: any) {
+      toast.error(err.message || "Erro ao fazer upload");
+    } finally {
       setUploading(false);
     }
   };
 
-  if (loading) {
+  if (loadingClients) {
     return (
-      <div className="flex items-center justify-center h-96">
-        <div className="flex flex-col items-center gap-4">
-          <Loader2 className="w-8 h-8 animate-spin text-orange-500" />
-          <p className="text-slate-600">Carregando clientes...</p>
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-96">
+          <div className="flex flex-col items-center gap-4">
+            <Loader2 className="w-8 h-8 animate-spin text-orange-500" />
+            <p className="text-slate-600">Carregando clientes...</p>
+          </div>
         </div>
-      </div>
+      </DashboardLayout>
     );
   }
 
   return (
     <DashboardLayout>
     <div className="space-y-6">
-      {/* Header */}
+      {/* Cabeçalho */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-slate-900 flex items-center gap-2">
@@ -267,19 +174,6 @@ export default function AdminDocuments() {
             </DialogHeader>
 
             <form onSubmit={handleUpload} className="space-y-4">
-              {error && (
-                <Alert variant="destructive">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertDescription>{error}</AlertDescription>
-                </Alert>
-              )}
-              {success && (
-                <Alert className="bg-green-50 border-green-200">
-                  <CheckCircle className="h-4 w-4 text-green-600" />
-                  <AlertDescription className="text-green-800">{success}</AlertDescription>
-                </Alert>
-              )}
-
               <div className="space-y-2">
                 <label className="text-sm font-medium">Cliente</label>
                 <Select value={selectedClientId} onValueChange={setSelectedClientId}>
@@ -300,7 +194,7 @@ export default function AdminDocuments() {
                 <label className="text-sm font-medium">Tipo de Documento</label>
                 <Select
                   value={formData.documentType}
-                  onValueChange={(value) => setFormData({ ...formData, documentType: value })}
+                  onValueChange={(value) => setFormData((prev) => ({ ...prev, documentType: value }))}
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -318,7 +212,7 @@ export default function AdminDocuments() {
                 <Input
                   placeholder="Ex: Manutenção Bomba - Dezembro 2024"
                   value={formData.title}
-                  onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, title: e.target.value }))}
                   required
                 />
               </div>
@@ -328,7 +222,7 @@ export default function AdminDocuments() {
                 <Input
                   placeholder="Detalhes adicionais sobre o documento"
                   value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, description: e.target.value }))}
                 />
               </div>
 
@@ -337,7 +231,7 @@ export default function AdminDocuments() {
                   <label className="text-sm font-medium">Mês de Referência</label>
                   <Select
                     value={formData.month.toString()}
-                    onValueChange={(value) => setFormData({ ...formData, month: parseInt(value) })}
+                    onValueChange={(value) => setFormData((prev) => ({ ...prev, month: parseInt(value) }))}
                   >
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -351,7 +245,7 @@ export default function AdminDocuments() {
                   <label className="text-sm font-medium">Ano de Referência</label>
                   <Select
                     value={formData.year.toString()}
-                    onValueChange={(value) => setFormData({ ...formData, year: parseInt(value) })}
+                    onValueChange={(value) => setFormData((prev) => ({ ...prev, year: parseInt(value) }))}
                   >
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -396,15 +290,7 @@ export default function AdminDocuments() {
         </Dialog>
       </div>
 
-      {/* Success toast */}
-      {success && (
-        <Alert className="bg-green-50 border-green-200">
-          <CheckCircle className="h-4 w-4 text-green-600" />
-          <AlertDescription className="text-green-800">{success}</AlertDescription>
-        </Alert>
-      )}
-
-      {/* Clients list */}
+      {/* Lista de clientes */}
       <Card>
         <CardHeader>
           <CardTitle>Clientes</CardTitle>
@@ -423,12 +309,12 @@ export default function AdminDocuments() {
             <div className="divide-y divide-slate-100">
               {clients.map((client) => {
                 const isExpanded = expandedClientId === client.id;
-                const docs = clientDocuments[client.id] ?? [];
-                const isLoadingDocs = loadingDocs[client.id];
+                // Usa os documentos carregados se este cliente estiver expandido
+                const docs = isExpanded ? expandedDocs : [];
 
                 return (
                   <div key={client.id}>
-                    {/* Client row */}
+                    {/* Linha do cliente */}
                     <div
                       className="flex items-center justify-between px-6 py-4 hover:bg-slate-50 cursor-pointer transition-colors"
                       onClick={() => handleToggleClient(client.id)}
@@ -464,10 +350,10 @@ export default function AdminDocuments() {
                       </div>
                     </div>
 
-                    {/* Documents panel */}
+                    {/* Painel de documentos (só renderiza quando expandido) */}
                     {isExpanded && (
                       <div className="bg-slate-50 border-t border-slate-100 px-6 py-4">
-                        {isLoadingDocs ? (
+                        {loadingDocs ? (
                           <div className="flex items-center gap-2 py-4 text-slate-500">
                             <Loader2 className="w-4 h-4 animate-spin" />
                             <span className="text-sm">Carregando documentos...</span>
@@ -507,9 +393,11 @@ export default function AdminDocuments() {
                                       <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${DOC_TYPE_COLORS[doc.documentType] ?? DOC_TYPE_COLORS.outro}`}>
                                         {DOC_TYPE_LABELS[doc.documentType] ?? doc.documentType}
                                       </span>
-                                      <span className="text-xs text-slate-400">
-                                        {MONTH_NAMES[doc.month]}/{doc.year}
-                                      </span>
+                                      {doc.month && doc.year && (
+                                        <span className="text-xs text-slate-400">
+                                          {MONTH_NAMES[doc.month]}/{doc.year}
+                                        </span>
+                                      )}
                                       {doc.description && (
                                         <span className="text-xs text-slate-400 truncate max-w-[200px]">
                                           · {doc.description}
@@ -538,7 +426,7 @@ export default function AdminDocuments() {
                                         onClick={() => {
                                           const a = document.createElement("a");
                                           a.href = doc.fileUrl!;
-                                          a.download = doc.fileName;
+                                          a.download = doc.title;
                                           a.click();
                                         }}
                                       >
