@@ -257,15 +257,7 @@ export default function AdminBudgetDetail() {
     setItemsDirty(true);
   };
 
-  const addLaborItem = () => {
-    setItems((prev) => [
-      ...prev,
-      { description: "Mão de Obra", quantity: 100, unit: "vb", unitPrice: 0, totalPrice: 0, orderIndex: prev.length },
-    ]);
-    setItemsDirty(true);
-  };
-
-  const updateItem = (idx: number, field: keyof BudgetItem, raw: string | number) => {
+const updateItem = (idx: number, field: keyof BudgetItem, raw: string | number) => {
     setItems((prev) => {
       const updated = [...prev];
       const item = { ...updated[idx] };
@@ -639,14 +631,9 @@ export default function AdminBudgetDetail() {
             <div className="flex justify-between items-center">
               <h2 className="font-bold text-slate-800">Itens do Orçamento</h2>
               {(isEditable || budget?.status === "finalizado") && (
-                <div className="flex gap-2">
-                  <Button size="sm" onClick={addLaborItem} variant="outline" className="gap-2 text-blue-700 border-blue-200 hover:bg-blue-50">
-                    <Plus className="w-4 h-4" /> Mão de Obra
-                  </Button>
-                  <Button size="sm" onClick={addItem} variant="outline" className="gap-2">
-                    <Plus className="w-4 h-4" /> Adicionar Item
-                  </Button>
-                </div>
+                <Button size="sm" onClick={addItem} variant="outline" className="gap-2">
+                  <Plus className="w-4 h-4" /> Adicionar Item
+                </Button>
               )}
             </div>
 

@@ -868,21 +868,34 @@ export async function generateBudgetPDF(budgetId: number): Promise<Buffer> {
         ['Válido até',    budget.validUntil ? formatDate(budget.validUntil) : '—'],
         ['Validade',      `${budget.validityDays ?? '—'} dias`],
         ['Valor Total',   fmtCurrency(budget.totalValue)],
-        ['Mão de Obra',   fmtCurrency(budget.laborValue)],
       ];
 
-      const startY = y;
-      left.forEach(([label, value], i) => {
-        const rowY = startY + i * 16;
-        doc.font('Helvetica-Bold').text(`${label}: `, L, rowY, { continued: true, width: half });
-        doc.font('Helvetica').text(value, { width: half });
-      });
-      right.forEach(([label, value], i) => {
-        const rowY = startY + i * 16;
-        doc.font('Helvetica-Bold').text(`${label}: `, col2X, rowY, { continued: true, width: half });
-        doc.font('Helvetica').text(value, { width: half });
-      });
-      y = startY + left.length * 16 + 8;
+      // Renderiza as duas colunas linha a linha, calculando a altura real de cada linha
+      // para que valores longos (ex: título com quebra) não sobreponham as linhas abaixo.
+      let rowY = y;
+      doc.fontSize(9).font('Helvetica');
+      const numRows = Math.max(left.length, right.length);
+      for (let i = 0; i < numRows; i++) {
+        let rowH = 14;
+        if (i < left.length) {
+          const h = doc.heightOfString(`${left[i][0]}: ${left[i][1]}`, { width: half });
+          rowH = Math.max(rowH, h + 4);
+        }
+        if (i < right.length) {
+          const h = doc.heightOfString(`${right[i][0]}: ${right[i][1]}`, { width: half });
+          rowH = Math.max(rowH, h + 4);
+        }
+        if (i < left.length) {
+          doc.font('Helvetica-Bold').text(`${left[i][0]}: `, L, rowY, { continued: true, width: half });
+          doc.font('Helvetica').text(left[i][1], { width: half });
+        }
+        if (i < right.length) {
+          doc.font('Helvetica-Bold').text(`${right[i][0]}: `, col2X, rowY, { continued: true, width: half });
+          doc.font('Helvetica').text(right[i][1], { width: half });
+        }
+        rowY += rowH;
+      }
+      y = rowY + 8;
 
       // ── DESCRIÇÃO ─────────────────────────────────────────────
       if (budget.description) {
@@ -921,14 +934,17 @@ export async function generateBudgetPDF(budgetId: number): Promise<Buffer> {
         y += 18;
 
         items.forEach((item: any, idx: number) => {
-          if (idx % 2 === 1) doc.rect(L, y, CW, 16).fill('#f8fafc');
+          const descW  = colQty - colDesc - 4;
+          const descH  = doc.fontSize(8).font('Helvetica').heightOfString(item.description || '—', { width: descW });
+          const rowH   = Math.max(16, descH + 6);
+          if (idx % 2 === 1) doc.rect(L, y, CW, rowH).fill('#f8fafc');
           doc.fillColor(DARK).font('Helvetica').fontSize(8);
-          doc.text(item.description,                                colDesc,   y + 2, { width: colQty - colDesc - 4 });
-          doc.text((item.quantity / 100).toFixed(2),                colQty,    y + 2, { width: 46, align: 'center' });
-          doc.text(item.unit || '—',                                colUnit,   y + 2, { width: 46, align: 'center' });
-          doc.text(fmtCurrency(item.unitPrice),                     colUPrice, y + 2, { width: 66, align: 'right' });
-          doc.font('Helvetica-Bold').text(fmtCurrency(item.totalPrice), colTotal,  y + 2, { width: 75, align: 'right' });
-          y += 16;
+          doc.text(item.description || '—',                            colDesc,   y + 3, { width: descW });
+          doc.text((item.quantity / 100).toFixed(2),                   colQty,    y + 3, { width: 46, align: 'center' });
+          doc.text(item.unit || '—',                                   colUnit,   y + 3, { width: 46, align: 'center' });
+          doc.text(fmtCurrency(item.unitPrice),                        colUPrice, y + 3, { width: 66, align: 'right' });
+          doc.font('Helvetica-Bold').text(fmtCurrency(item.totalPrice), colTotal, y + 3, { width: 75, align: 'right' });
+          y += rowH;
         });
 
         // rodapé da tabela
