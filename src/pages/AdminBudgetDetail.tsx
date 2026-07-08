@@ -35,7 +35,7 @@ const PRIORITY_OPTIONS = [
   { value: "critica", label: "Crítica" },
 ];
 
-const UNIT_OPTIONS = ["un", "m", "m²", "m³", "h", "kg", "l", "cx", "rolo", "par"];
+const UNIT_OPTIONS = ["un", "m", "m²", "m³", "h", "kg", "l", "cx", "rolo", "par", "vb"];
 
 // ─── Tipos locais ─────────────────────────────────────────────────────────
 
@@ -70,7 +70,6 @@ export default function AdminBudgetDetail() {
   const [description, setDescription] = useState("");
   const [scope, setScope] = useState("");
   const [validityDays, setValidityDays] = useState(30);
-  const [laborValue, setLaborValue] = useState<string>("");
   const [internalNotes, setInternalNotes] = useState("");
   const [clientNotes, setClientNotes] = useState("");
 
@@ -239,7 +238,6 @@ export default function AdminBudgetDetail() {
     setDescription(budget.description ?? "");
     setScope(budget.scope ?? "");
     setValidityDays(budget.validityDays);
-    setLaborValue(budget.laborValue ? String(budget.laborValue / 100) : "");
     setInternalNotes(budget.internalNotes ?? "");
     setClientNotes(budget.clientNotes ?? "");
   }, [budget]);
@@ -255,6 +253,14 @@ export default function AdminBudgetDetail() {
     setItems((prev) => [
       ...prev,
       { description: "", quantity: 100, unit: "un", unitPrice: 0, totalPrice: 0, orderIndex: prev.length },
+    ]);
+    setItemsDirty(true);
+  };
+
+  const addLaborItem = () => {
+    setItems((prev) => [
+      ...prev,
+      { description: "Mão de Obra", quantity: 100, unit: "vb", unitPrice: 0, totalPrice: 0, orderIndex: prev.length },
     ]);
     setItemsDirty(true);
   };
@@ -281,9 +287,7 @@ export default function AdminBudgetDetail() {
     setItemsDirty(true);
   };
 
-  const itemsTotal = items.reduce((s, it) => s + it.totalPrice, 0);
-  const laborCents = Math.round(parseFloat(laborValue || "0") * 100);
-  const grandTotal = itemsTotal + laborCents;
+  const grandTotal = items.reduce((s, it) => s + it.totalPrice, 0);
 
   // ─── Salvar cabeçalho ─────────────────────────────────────────────────
 
@@ -300,7 +304,6 @@ export default function AdminBudgetDetail() {
         description: description || undefined,
         scope: scope || undefined,
         validityDays,
-        laborValue: laborCents || undefined,
         internalNotes: internalNotes || undefined,
         clientNotes: clientNotes || undefined,
       });
@@ -313,10 +316,9 @@ export default function AdminBudgetDetail() {
         description: description || undefined,
         scope: scope || undefined,
         validityDays,
-        laborValue: laborCents || undefined,
         internalNotes: internalNotes || undefined,
         clientNotes: clientNotes || undefined,
-        totalValue: grandTotal || undefined,
+        totalValue: grandTotal > 0 ? grandTotal : undefined,
         saveSnapshot: budget?.status === "finalizado",
       });
     }
@@ -437,7 +439,11 @@ export default function AdminBudgetDetail() {
               </DropdownMenuContent>
             </DropdownMenu>
             {canFinalize && (
-              <Button size="sm" onClick={() => setFinalizeModalOpen(true)} className="gap-2 bg-blue-600 hover:bg-blue-700">
+              <Button size="sm" onClick={() => {
+                if (itemsDirty) { toast.error("Salve os itens antes de finalizar"); return; }
+                if (grandTotal <= 0) { toast.error("Adicione itens com preço antes de finalizar. O orçamento não pode ter valor zero."); return; }
+                setFinalizeModalOpen(true);
+              }} className="gap-2 bg-blue-600 hover:bg-blue-700">
                 <Send className="w-4 h-4" /> {budget.status === "finalizado" ? "Re-Finalizar (Revisão)" : "Finalizar"}
               </Button>
             )}
@@ -543,7 +549,7 @@ export default function AdminBudgetDetail() {
             <Card>
               <CardHeader><CardTitle className="text-base">Valores e Validade</CardTitle></CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <Label>Validade (dias)</Label>
                     <Input
@@ -556,23 +562,11 @@ export default function AdminBudgetDetail() {
                     <p className="text-xs text-slate-400 mt-1">A partir da data de finalização</p>
                   </div>
                   <div>
-                    <Label>Mão de Obra (R$)</Label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      min={0}
-                      value={laborValue}
-                      onChange={(e) => { setLaborValue(e.target.value); setItemsDirty(true); }}
-                      placeholder="0,00"
-                      disabled={!isEditable && !isNew}
-                    />
-                  </div>
-                  <div>
                     <Label>Total Estimado</Label>
                     <div className="h-10 flex items-center px-3 bg-slate-50 rounded-md border text-green-700 font-bold text-sm">
                       {formatCurrency(grandTotal)}
                     </div>
-                    <p className="text-xs text-slate-400 mt-1">Itens + mão de obra</p>
+                    <p className="text-xs text-slate-400 mt-1">Soma dos itens (incluindo mão de obra)</p>
                   </div>
                 </div>
               </CardContent>
@@ -645,9 +639,14 @@ export default function AdminBudgetDetail() {
             <div className="flex justify-between items-center">
               <h2 className="font-bold text-slate-800">Itens do Orçamento</h2>
               {(isEditable || budget?.status === "finalizado") && (
-                <Button size="sm" onClick={addItem} variant="outline" className="gap-2">
-                  <Plus className="w-4 h-4" /> Adicionar Item
-                </Button>
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={addLaborItem} variant="outline" className="gap-2 text-blue-700 border-blue-200 hover:bg-blue-50">
+                    <Plus className="w-4 h-4" /> Mão de Obra
+                  </Button>
+                  <Button size="sm" onClick={addItem} variant="outline" className="gap-2">
+                    <Plus className="w-4 h-4" /> Adicionar Item
+                  </Button>
+                </div>
               )}
             </div>
 
@@ -736,18 +735,6 @@ export default function AdminBudgetDetail() {
                   </tbody>
                   {items.length > 0 && (
                     <tfoot className="bg-slate-50 border-t">
-                      <tr>
-                        <td colSpan={4} className="p-3 text-right font-semibold text-slate-600">Subtotal Itens</td>
-                        <td className="p-3 text-right font-bold text-slate-800">{formatCurrency(itemsTotal)}</td>
-                        {(isEditable || budget?.status === "finalizado") && <td />}
-                      </tr>
-                      {laborCents > 0 && (
-                        <tr>
-                          <td colSpan={4} className="p-3 text-right font-semibold text-slate-600">Mão de Obra</td>
-                          <td className="p-3 text-right font-bold text-slate-800">{formatCurrency(laborCents)}</td>
-                          {(isEditable || budget?.status === "finalizado") && <td />}
-                        </tr>
-                      )}
                       <tr>
                         <td colSpan={4} className="p-3 text-right font-black text-slate-800 text-base">TOTAL</td>
                         <td className="p-3 text-right font-black text-green-700 text-base">{formatCurrency(grandTotal)}</td>
@@ -915,6 +902,11 @@ export default function AdminBudgetDetail() {
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 pt-2">
+            <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
+              <p className="text-sm text-green-800">
+                Valor total do orçamento: <span className="font-bold">{formatCurrency(grandTotal)}</span>
+              </p>
+            </div>
             {budget?.status === "finalizado" && (
               <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm">
                 Ao re-finalizar, uma nova revisão será salva no histórico e um novo link de aprovação será gerado.
