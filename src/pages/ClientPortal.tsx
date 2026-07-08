@@ -469,13 +469,7 @@ export default function ClientPortal() {
               <p className="text-xs text-slate-500 line-clamp-1">{doc.description}</p>
             )}
             <p className="text-xs text-slate-400 mt-0.5">
-              {doc.month && doc.year
-                ? (() => {
-                    const meses = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho",
-                      "Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
-                    return `${meses[doc.month - 1]}/${doc.year}`;
-                  })()
-                : new Date(doc.uploadedAt).toLocaleDateString("pt-BR")}
+              {new Date(doc.uploadedAt).toLocaleDateString("pt-BR")}
             </p>
           </div>
           <Button
