@@ -98,7 +98,22 @@ client.on('disconnected', async (reason) => {
 
 // Inicia o serviço (desabilitado em dev via WHATSAPP_DISABLED=true no .env)
 if (process.env.WHATSAPP_DISABLED !== 'true') {
-  client.initialize();
+  client.initialize().catch(handleInitError);
+}
+
+// Quando o PM2 reinicia o servidor mas o processo do Chromium sobrevive,
+// o whatsapp-web.js falha ao tentar registrar funções que já existem na página.
+// Neste caso: destrói o cliente (fecha o browser) e tenta novamente do zero.
+async function handleInitError(err: any) {
+  console.error('❌ Erro ao inicializar WhatsApp:', err?.message);
+  if (err?.message?.includes('already exists')) {
+    console.log('🔄 Sessão antiga do browser detectada. Destruindo e reinicializando...');
+    try { await client.destroy(); } catch (_) {}
+    await new Promise(r => setTimeout(r, 3000));
+    client.initialize().catch((e: any) => {
+      console.error('❌ Falha permanente na inicialização do WhatsApp:', e?.message);
+    });
+  }
 }
 
 /**
