@@ -827,8 +827,6 @@ export async function getAllDocumentsWithFilters(filters: {
       fileKey: clientDocuments.fileKey,
       fileSize: clientDocuments.fileSize,
       mimeType: clientDocuments.mimeType,
-      month: clientDocuments.month,
-      year: clientDocuments.year,
       uploadedAt: clientDocuments.uploadedAt,
       clientId: clientDocuments.clientId,
       clientName: clients.name,
