@@ -155,18 +155,13 @@ export const sendWhatsappToNumber = async (phone: string, message: string) => {
     const digits = phone.replace(/\D/g, '');
     const normalized = digits.startsWith('55') ? digits : `55${digits}`;
 
-    try {
-        const check = await client.getNumberId(`${normalized}@c.us`);
-        if (check) {
-            const chat = await client.getChatById(check._serialized);
-            await chat.sendMessage(message);
-            console.log(`🚀 Mensagem enviada para ${normalized}`);
-        } else {
-            console.error(`❌ Número ${normalized} não encontrado no WhatsApp.`);
-        }
-    } catch (err: any) {
-        console.error('❌ ERRO ao enviar para número:', err?.message);
+    const check = await client.getNumberId(`${normalized}@c.us`);
+    if (!check) {
+        throw new Error(`Número ${normalized} não encontrado no WhatsApp`);
     }
+    const chat = await client.getChatById(check._serialized);
+    await chat.sendMessage(message);
+    console.log(`🚀 Mensagem enviada para ${normalized}`);
 };
 
 /**
