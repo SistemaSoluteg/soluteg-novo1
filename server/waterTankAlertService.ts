@@ -428,32 +428,37 @@ export async function checkAndSendAlerts(params: {
 
     // ── SUBINDO ──────────────────────────────────────────────────────────────
 
-    if (isGoingUp && state.consecutiveUpCount >= CONFIRM) {
+    if (isGoingUp) {
 
-      // Alarm3 boia — nível alto (pane na boia de corte) — só se habilitado
-      if (zone === "boia_high" && previousZone !== "boia_high" && cfg.alarm3BoiaEnabled) {
-        await fire("alarm3_boia", cfg.alarm3BoiaPct, "up", `Nível alto — ${cfg.tankType}`, getAdminPhones());
-        state.currentZone = "boia_high";
+      // Filling e level_restored disparam com CONFIRM_CRITICAL — restauração
+      // do nível é tão urgente quanto o alarme de descida.
+      if (state.consecutiveUpCount >= CONFIRM_CRITICAL) {
+
+        // Filling — começou a subir enquanto ainda estava em zona de alarme
+        if (previousZone !== "normal" && previousZone !== "boia_high" && !state.fillingNotified) {
+          await fire("filling", cfg.alarm1Pct, "up", "Reservatório enchendo", getAdminPhones());
+          state.fillingNotified = true;
+        }
+
+        // Nível restaurado — nível voltou a ≥85% após estar em alarme
+        const wasLowAlarm = state.currentZone === "alarm1" || state.currentZone === "alarm2" || state.currentZone === "sci";
+        if (currentLevel >= 85 && wasLowAlarm && !state.normalizedNotified) {
+          await fire("level_restored", 85, "up", "Nível normalizado — 85%", getPhones());
+          state.normalizedNotified = true;
+          state.currentZone = "normal";
+          state.lastDropAlertLevel = null;
+          state.fillingNotified = false;
+          state.consecutiveDownCount = 0;
+        }
       }
 
-      // Filling — estava em alarme há pelo menos 2,5 min e começou a encher
-      // 2,5 min = CONFIRM (5) × 30s de buffer — confirma que não é leitura espúria
-      if (previousZone !== "normal" && previousZone !== "boia_high" && !state.fillingNotified) {
-        await fire("filling", cfg.alarm1Pct, "up", "Reservatório enchendo", getAdminPhones());
-        state.fillingNotified = true;
-      }
-
-      // Nível restaurado — exige o mesmo CONFIRM que a entrada em alarme:
-      // 5 leituras consecutivas subindo acima de 85% antes de confirmar recuperação.
-      // Sem esse guard, um spike de ruído único a 100% já disparava o aviso.
-      const wasLowAlarm = state.currentZone === "alarm1" || state.currentZone === "alarm2" || state.currentZone === "sci";
-      if (currentLevel >= 85 && wasLowAlarm && !state.normalizedNotified) {
-        await fire("level_restored", 85, "up", "Nível normalizado — 85%", getPhones());
-        state.normalizedNotified = true;
-        state.currentZone = "normal";
-        state.lastDropAlertLevel = null;
-        state.fillingNotified = false;
-        state.consecutiveDownCount = 0;
+      // Alarm3 boia usa CONFIRM completo — pane na boia de corte é detectada
+      // por nível ALTO sustentado, não por um único spike de ruído.
+      if (state.consecutiveUpCount >= CONFIRM) {
+        if (zone === "boia_high" && previousZone !== "boia_high" && cfg.alarm3BoiaEnabled) {
+          await fire("alarm3_boia", cfg.alarm3BoiaPct, "up", `Nível alto — ${cfg.tankType}`, getAdminPhones());
+          state.currentZone = "boia_high";
+        }
       }
     }
   } catch (err: any) {
