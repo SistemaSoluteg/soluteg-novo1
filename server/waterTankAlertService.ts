@@ -375,9 +375,14 @@ export async function checkAndSendAlerts(params: {
       // Não aguardar os 5 flushes do CONFIRM normal, pois a caixa pode esvaziar em segundos.
       if (state.consecutiveDownCount >= CONFIRM_CRITICAL) {
 
-        // SCI — reserva de incêndio (OS já criada no alarm2 — só notifica)
+        // SCI — reserva de incêndio
+        // Se previousZone === "alarm2", alarm2 já disparou e criou a OS — só notifica.
+        // Se o nível saltou direto de alarm1/normal para sci (pulou alarm2), cria OS aqui.
         if (zone === "sci" && previousZone !== "sci") {
-          await fire("sci_reserve", cfg.deadVolumePct, "down", "Consumo da reserva SCI", getPhones());
+          const sciOsId = previousZone !== "alarm2"
+            ? await createEmergencyWorkOrder(cfg, tankName, currentLevel)
+            : null;
+          await fire("sci_reserve", cfg.deadVolumePct, "down", "Consumo da reserva SCI", getPhones(), sciOsId);
           state.currentZone = "sci";
         }
 
@@ -434,8 +439,10 @@ export async function checkAndSendAlerts(params: {
       // do nível é tão urgente quanto o alarme de descida.
       if (state.consecutiveUpCount >= CONFIRM_CRITICAL) {
 
-        // Filling — começou a subir enquanto ainda estava em zona de alarme
-        if (previousZone !== "normal" && previousZone !== "boia_high" && !state.fillingNotified) {
+        // Filling — começou a subir enquanto estava em zona de alarme.
+        // Exige currentLevel > alarm2Pct para evitar falso positivo quando o nível
+        // oscila dentro da zona crítica (ex: 0% → 4% ainda é alarme, não recuperação).
+        if (previousZone !== "normal" && previousZone !== "boia_high" && !state.fillingNotified && currentLevel > cfg.alarm2Pct) {
           await fire("filling", cfg.alarm1Pct, "up", "Reservatório enchendo", getAdminPhones());
           state.fillingNotified = true;
         }
