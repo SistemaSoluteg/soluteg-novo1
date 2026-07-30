@@ -187,11 +187,13 @@ export const sendWhatsappToNumber = async (phone: string, message: string) => {
     const normalized = digits.startsWith('55') ? digits : `55${digits}`;
 
     try {
-        const check = await client.getNumberId(`${normalized}@c.us`);
+        const cusId = `${normalized}@c.us`;
+        const check = await client.getNumberId(cusId);
         if (!check) {
             throw new Error(`Número ${normalized} não encontrado no WhatsApp`);
         }
-        const chat = await client.getChatById(check._serialized);
+        const idFinal = check._serialized.includes('@lid') ? cusId : check._serialized;
+        const chat = await client.getChatById(idFinal);
         await chat.sendMessage(message);
         console.log(`🚀 Mensagem enviada para ${normalized}`);
     } catch (err: any) {
@@ -213,9 +215,11 @@ export const sendWhatsappToNumberWithPDF = async (phone: string, message: string
     const normalized = digits.startsWith('55') ? digits : `55${digits}`;
 
     try {
-        const check = await client.getNumberId(`${normalized}@c.us`);
+        const cusId = `${normalized}@c.us`;
+        const check = await client.getNumberId(cusId);
         if (check) {
-            const chat = await client.getChatById(check._serialized);
+            const idFinal = check._serialized.includes('@lid') ? cusId : check._serialized;
+            const chat = await client.getChatById(idFinal);
             const media = new MessageMedia('application/pdf', pdfBuffer.toString('base64'), filename);
             await chat.sendMessage(media, { caption: message });
             console.log(`🚀 PDF enviado para ${normalized}`);
@@ -242,19 +246,20 @@ export const sendWhatsappAlert = async (message: string) => {
     try {
         // Tentamos os dois formatos possíveis do litoral
         const formatos = ["5513981301010@c.us", "551381301010@c.us"];
-        let idFinal = null;
+        let idFinal: string | null = null;
 
         for (const f of formatos) {
             const check = await client.getNumberId(f);
             if (check) {
-                idFinal = check._serialized;
+                // getNumberId pode retornar @lid (novo formato Meta) que quebra getChatById.
+                // Se vier @lid, usa o @c.us que já passou na validação.
+                idFinal = check._serialized.includes('@lid') ? f : check._serialized;
                 break;
             }
         }
 
         if (idFinal) {
             console.log(`✅ ID Localizado: ${idFinal}`);
-            // Usamos o objeto 'chat' para garantir a entrega
             const chat = await client.getChatById(idFinal);
             await chat.sendMessage(message);
             console.log('🚀 SUCESSO: Mensagem enviada para a JNC!');
@@ -278,12 +283,12 @@ export const sendWhatsappAlertWithPDF = async (message: string, pdfBuffer: Buffe
 
     try {
         const formatos = ["5513981301010@c.us", "551381301010@c.us"];
-        let idFinal = null;
+        let idFinal: string | null = null;
 
         for (const f of formatos) {
             const check = await client.getNumberId(f);
             if (check) {
-                idFinal = check._serialized;
+                idFinal = check._serialized.includes('@lid') ? f : check._serialized;
                 break;
             }
         }
