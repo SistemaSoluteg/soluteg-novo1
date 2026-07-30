@@ -116,6 +116,38 @@ async function handleInitError(err: any) {
   }
 }
 
+// Detecta erros de conexão Puppeteer que ocorrem MID-OPERATION (o evento 'disconnected'
+// não dispara nesses casos). Marca como desconectado e aciona reconexão manual.
+// Frases conhecidas: 'detached Frame', 'Session closed', 'Target closed', 'Protocol error'
+function isConnectionError(err: any): boolean {
+  const msg: string = err?.message ?? '';
+  return (
+    msg.includes('detached Frame') ||
+    msg.includes('Session closed') ||
+    msg.includes('Target closed') ||
+    msg.includes('Protocol error')
+  );
+}
+
+let reconnecting = false; // evita múltiplas reconexões concorrentes
+
+function triggerReconnect() {
+  if (reconnecting) return;
+  reconnecting = true;
+  isReady = false;
+  console.log('🔄 Erro de conexão Puppeteer detectado — reconectando WhatsApp em 15s...');
+  setTimeout(async () => {
+    try { await client.destroy(); } catch (_) {}
+    setTimeout(() => {
+      console.log('🔄 Reinicializando cliente WhatsApp após erro de frame...');
+      client.initialize().catch((e: any) => {
+        console.error('❌ Falha ao reinicializar após erro de frame:', e?.message);
+      });
+      reconnecting = false;
+    }, 3000);
+  }, 15000);
+}
+
 /**
  * Retorna o status atual da conexão WhatsApp
  */
@@ -155,13 +187,18 @@ export const sendWhatsappToNumber = async (phone: string, message: string) => {
     const digits = phone.replace(/\D/g, '');
     const normalized = digits.startsWith('55') ? digits : `55${digits}`;
 
-    const check = await client.getNumberId(`${normalized}@c.us`);
-    if (!check) {
-        throw new Error(`Número ${normalized} não encontrado no WhatsApp`);
+    try {
+        const check = await client.getNumberId(`${normalized}@c.us`);
+        if (!check) {
+            throw new Error(`Número ${normalized} não encontrado no WhatsApp`);
+        }
+        const chat = await client.getChatById(check._serialized);
+        await chat.sendMessage(message);
+        console.log(`🚀 Mensagem enviada para ${normalized}`);
+    } catch (err: any) {
+        if (isConnectionError(err)) triggerReconnect();
+        throw err;
     }
-    const chat = await client.getChatById(check._serialized);
-    await chat.sendMessage(message);
-    console.log(`🚀 Mensagem enviada para ${normalized}`);
 };
 
 /**
@@ -188,6 +225,7 @@ export const sendWhatsappToNumberWithPDF = async (phone: string, message: string
         }
     } catch (err: any) {
         console.error('❌ ERRO ao enviar PDF para número:', err?.message);
+        if (isConnectionError(err)) triggerReconnect();
     }
 };
 
@@ -224,8 +262,9 @@ export const sendWhatsappAlert = async (message: string) => {
         } else {
             console.error('❌ ERRO: O WhatsApp não encontrou o número 13-98130-1010 em nenhum formato.');
         }
-    } catch (err) {
-        console.error('❌ ERRO CRÍTICO:', err.message);
+    } catch (err: any) {
+        console.error('❌ ERRO CRÍTICO:', err?.message);
+        if (isConnectionError(err)) triggerReconnect();
     }
 };
 
@@ -260,5 +299,6 @@ export const sendWhatsappAlertWithPDF = async (message: string, pdfBuffer: Buffe
         }
     } catch (err: any) {
         console.error('❌ ERRO CRÍTICO ao enviar PDF para admin:', err?.message);
+        if (isConnectionError(err)) triggerReconnect();
     }
 };
