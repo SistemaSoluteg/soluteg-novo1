@@ -20,7 +20,6 @@ const client = new Client({
 
 let isReady = false;
 let lastQrDataUrl: string | null = null; // Último QR code como imagem (data URL)
-const meuNumero = "551381301010@c.us"; // Formato ID para o litoral (13)
 
 // Evento: Gerar QR Code no Terminal + armazenar como imagem
 client.on('qr', async (qr) => {
@@ -39,14 +38,14 @@ client.on('ready', async () => {
     lastQrDataUrl = null; // QR não é mais necessário após conectar
     console.log('✅ WHATSAPP DA JNC ELÉTRICA e BOMBAS ON!');
 
-    // Aguarda 8s para garantir que o client está estável antes de enviar
+    // Aguarda 8s para garantir que o client está estável antes de enviar.
+    // Usa sendWhatsappAlert em vez de client.sendMessage direto: valida o número
+    // com getNumberId() (tenta ambos os formatos: com e sem o 9) antes de enviar.
     setTimeout(async () => {
         try {
-            console.log('--- Tentando enviar mensagem inicial para:', meuNumero);
-            await client.sendMessage(meuNumero, "🚀 *SISTEMA JNC ONLINE*\nNotificações de OS ativadas.");
-            console.log('🚀 Mensagem de inicialização ENVIADA!');
-        } catch (err) {
-            console.error('❌ Erro no envio inicial:', err.message);
+            await sendWhatsappAlert("🚀 *SISTEMA JNC ONLINE*\nNotificações de OS ativadas.");
+        } catch (err: any) {
+            console.error('❌ Erro no envio inicial:', err?.message);
         }
 
         // Reprocessa alertas de caixa d'água que não foram entregues enquanto o Zap estava offline
