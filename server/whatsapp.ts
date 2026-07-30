@@ -192,9 +192,9 @@ export const sendWhatsappToNumber = async (phone: string, message: string) => {
         if (!check) {
             throw new Error(`Número ${normalized} não encontrado no WhatsApp`);
         }
-        const idFinal = check._serialized.includes('@lid') ? cusId : check._serialized;
-        const chat = await client.getChatById(idFinal);
-        await chat.sendMessage(message);
+        // getChatById falha com erro críptico "r" quando o contato migrou para @lid.
+        // client.sendMessage resolve o ID internamente sem depender do getChatById.
+        await client.sendMessage(cusId, message);
         console.log(`🚀 Mensagem enviada para ${normalized}`);
     } catch (err: any) {
         if (isConnectionError(err)) triggerReconnect();
@@ -218,10 +218,8 @@ export const sendWhatsappToNumberWithPDF = async (phone: string, message: string
         const cusId = `${normalized}@c.us`;
         const check = await client.getNumberId(cusId);
         if (check) {
-            const idFinal = check._serialized.includes('@lid') ? cusId : check._serialized;
-            const chat = await client.getChatById(idFinal);
             const media = new MessageMedia('application/pdf', pdfBuffer.toString('base64'), filename);
-            await chat.sendMessage(media, { caption: message });
+            await client.sendMessage(cusId, media, { caption: message });
             console.log(`🚀 PDF enviado para ${normalized}`);
         } else {
             console.error(`❌ Número ${normalized} não encontrado no WhatsApp.`);
@@ -260,8 +258,7 @@ export const sendWhatsappAlert = async (message: string) => {
 
         if (idFinal) {
             console.log(`✅ ID Localizado: ${idFinal}`);
-            const chat = await client.getChatById(idFinal);
-            await chat.sendMessage(message);
+            await client.sendMessage(idFinal, message);
             console.log('🚀 SUCESSO: Mensagem enviada para a JNC!');
         } else {
             console.error('❌ ERRO: O WhatsApp não encontrou o número 13-98130-1010 em nenhum formato.');
@@ -294,9 +291,8 @@ export const sendWhatsappAlertWithPDF = async (message: string, pdfBuffer: Buffe
         }
 
         if (idFinal) {
-            const chat = await client.getChatById(idFinal);
             const media = new MessageMedia('application/pdf', pdfBuffer.toString('base64'), filename);
-            await chat.sendMessage(media, { caption: message });
+            await client.sendMessage(idFinal, media, { caption: message });
             console.log('🚀 SUCESSO: PDF enviado para a JNC!');
         } else {
             console.error('❌ ERRO: O WhatsApp não encontrou o número 13-98130-1010 em nenhum formato.');
