@@ -379,8 +379,14 @@ export default function AdminWaterTankDashboard() {
                 )}
                 {sensor.alertPhone && (
                   <div className="flex justify-between">
-                    <span className="text-slate-500">Tel. adicional</span>
+                    <span className="text-slate-500">Tel. adicional 1</span>
                     <span className="font-medium">{sensor.alertPhone}</span>
+                  </div>
+                )}
+                {sensor.alertPhone2 && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Tel. adicional 2</span>
+                    <span className="font-medium">{sensor.alertPhone2}</span>
                   </div>
                 )}
                 <div className="flex justify-between">

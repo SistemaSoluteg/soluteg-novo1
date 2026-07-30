@@ -77,6 +77,7 @@ export type SensorAlertState = {
   lastDropAlertLevel: number | null; // nível no último alerta progressivo disparado
   fillingNotified: boolean;          // já notificou "enchendo" neste ciclo
   normalizedNotified: boolean;       // já notificou "normalizado (85%)" neste ciclo
+  boiaFaultNotified: boolean;        // já notificou "falha de boia" neste ciclo — evita spam
   lastKnownLevel: number | null;
 };
 
@@ -91,6 +92,7 @@ function getOrCreateAlertState(deviceId: string): SensorAlertState {
       lastDropAlertLevel: null,
       fillingNotified: false,
       normalizedNotified: false,
+      boiaFaultNotified: false,
       lastKnownLevel: null,
     });
   }

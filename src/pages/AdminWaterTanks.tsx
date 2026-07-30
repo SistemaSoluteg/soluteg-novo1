@@ -36,6 +36,7 @@ interface SensorRow {
   dropStepPct: number;
   tankType: string;
   alertPhone: string | null;
+  alertPhone2: string | null;
   distVazia: number | null;
   distCheia: number | null;
   active: number;
@@ -67,6 +68,7 @@ type AssignForm = {
   dropStepPct: string;
   tankType: string;
   alertPhone: string;
+  alertPhone2: string;
   distVazia: string;
   distCheia: string;
 };
@@ -75,7 +77,7 @@ const defaultAssign: AssignForm = {
   clientId: "", tankName: "", capacity: "", notes: "",
   deadVolumePct: "0", alarm1Pct: "30", alarm2Pct: "15",
   alarm3BoiaPct: "90", alarm3BoiaEnabled: "1", technicianId: "", dropStepPct: "10",
-  tankType: "superior", alertPhone: "", distVazia: "", distCheia: "",
+  tankType: "superior", alertPhone: "", alertPhone2: "", distVazia: "", distCheia: "",
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -232,11 +234,19 @@ function AssignFormFields({
           />
         </div>
         <div className="space-y-1.5">
-          <label className="text-sm font-medium">Tel. de alerta adicional</label>
+          <label className="text-sm font-medium">Tel. de alerta adicional 1</label>
           <Input
             type="tel" placeholder="(13) 99999-9999"
             value={form.alertPhone}
             onChange={(e) => setForm({ ...form, alertPhone: e.target.value })}
+          />
+        </div>
+        <div className="space-y-1.5 col-span-2">
+          <label className="text-sm font-medium">Tel. de alerta adicional 2</label>
+          <Input
+            type="tel" placeholder="(13) 99999-9999"
+            value={form.alertPhone2}
+            onChange={(e) => setForm({ ...form, alertPhone2: e.target.value })}
           />
         </div>
       </div>
@@ -453,6 +463,7 @@ export default function AdminWaterTanks() {
     dropStepPct: parseInt(f.dropStepPct) || 10,
     tankType: (f.tankType || "superior") as "superior" | "inferior",
     alertPhone: f.alertPhone || null,
+    alertPhone2: f.alertPhone2 || null,
     distVazia: f.distVazia ? parseInt(f.distVazia) : null,
     distCheia: f.distCheia ? parseInt(f.distCheia) : null,
   });
@@ -485,6 +496,7 @@ export default function AdminWaterTanks() {
       dropStepPct: String(s.dropStepPct ?? 10),
       tankType: s.tankType ?? "superior",
       alertPhone: s.alertPhone ?? "",
+      alertPhone2: s.alertPhone2 ?? "",
       distVazia: s.distVazia?.toString() ?? "",
       distCheia: s.distCheia?.toString() ?? "",
     });
