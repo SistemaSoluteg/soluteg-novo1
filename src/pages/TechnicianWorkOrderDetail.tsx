@@ -123,8 +123,6 @@ export default function TechnicianWorkOrderDetail() {
   const [isAddChecklistOpen, setIsAddChecklistOpen] = useState(false);
   const [addChecklistTemplateId, setAddChecklistTemplateId] = useState<string>("");
   const [addChecklistTitle, setAddChecklistTitle] = useState("");
-  const [addChecklistBrand, setAddChecklistBrand] = useState("");
-  const [addChecklistPower, setAddChecklistPower] = useState("");
   const [deleteChecklistId, setDeleteChecklistId] = useState<number | null>(null);
 
   useEffect(() => {
@@ -276,8 +274,6 @@ export default function TechnicianWorkOrderDetail() {
       setIsAddChecklistOpen(false);
       setAddChecklistTemplateId("");
       setAddChecklistTitle("");
-      setAddChecklistBrand("");
-      setAddChecklistPower("");
       refetchChecklists();
     },
     onError: (e: any) => toast.error(e.message || "Erro ao adicionar checklist"),
@@ -980,26 +976,6 @@ export default function TechnicianWorkOrderDetail() {
                           maxLength={255}
                         />
                       </div>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="space-y-1">
-                          <Label>Marca (opcional)</Label>
-                          <Input
-                            placeholder="Ex: WEG"
-                            value={addChecklistBrand}
-                            onChange={e => setAddChecklistBrand(e.target.value)}
-                            maxLength={100}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label>Potência (opcional)</Label>
-                          <Input
-                            placeholder="Ex: 5 CV"
-                            value={addChecklistPower}
-                            onChange={e => setAddChecklistPower(e.target.value)}
-                            maxLength={50}
-                          />
-                        </div>
-                      </div>
                     </div>
                     <DialogFooter>
                       <Button variant="outline" onClick={() => setIsAddChecklistOpen(false)}>
@@ -1012,8 +988,6 @@ export default function TechnicianWorkOrderDetail() {
                             workOrderId: workOrderId!,
                             templateId: parseInt(addChecklistTemplateId),
                             customTitle: addChecklistTitle.trim(),
-                            brand: addChecklistBrand.trim() || undefined,
-                            power: addChecklistPower.trim() || undefined,
                           });
                         }}
                         disabled={!addChecklistTemplateId || !addChecklistTitle.trim() || addChecklistMutation.isPending}

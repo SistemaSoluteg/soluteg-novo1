@@ -35,8 +35,6 @@ export default function InspectionTasksTab({ workOrderId }: InspectionTasksTabPr
   const [isAddChecklistOpen, setIsAddChecklistOpen] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
   const [customTitle, setCustomTitle] = useState("");
-  const [brand, setBrand] = useState("");
-  const [power, setPower] = useState("");
   const [editingChecklistId, setEditingChecklistId] = useState<number | null>(null);
   const [deleteChecklistDialogOpen, setDeleteChecklistDialogOpen] = useState<number | null>(null);
   const [savingChecklistId, setSavingChecklistId] = useState<number | null>(null);
@@ -74,8 +72,6 @@ export default function InspectionTasksTab({ workOrderId }: InspectionTasksTabPr
       setIsAddChecklistOpen(false);
       setSelectedTemplateId("");
       setCustomTitle("");
-      setBrand("");
-      setPower("");
     },
     onError: (err: { message: string }) => {
       toast.error(`Erro ao adicionar checklist: ${err.message}`);
@@ -161,8 +157,6 @@ export default function InspectionTasksTab({ workOrderId }: InspectionTasksTabPr
       inspectionTaskId: taskId,
       templateId: parseInt(selectedTemplateId),
       customTitle,
-      brand: brand || undefined,
-      power: power || undefined,
     });
   };
 
@@ -334,8 +328,6 @@ export default function InspectionTasksTab({ workOrderId }: InspectionTasksTabPr
             setIsAddChecklistOpen(false);
             setSelectedTemplateId("");
             setCustomTitle("");
-            setBrand("");
-            setPower("");
           }
         }}
       >
@@ -374,26 +366,6 @@ export default function InspectionTasksTab({ workOrderId }: InspectionTasksTabPr
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label>Marca (opcional)</Label>
-                <Input
-                  placeholder="Ex: WEG"
-                  value={brand}
-                  onChange={(e) => setBrand(e.target.value)}
-                  className="h-11"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Potência (opcional)</Label>
-                <Input
-                  placeholder="Ex: 5 CV"
-                  value={power}
-                  onChange={(e) => setPower(e.target.value)}
-                  className="h-11"
-                />
-              </div>
-            </div>
           </div>
 
           <DialogFooter className="gap-2">
