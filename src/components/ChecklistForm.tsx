@@ -368,7 +368,19 @@ export default function ChecklistForm({
       case "select":
         return (
           <div key={field.id} className="space-y-1.5">
-            <Label className="text-sm">{field.label}</Label>
+            <div className="flex items-center justify-between">
+              <Label className="text-sm">{field.label}</Label>
+              {!readOnly && onAddPhoto && field.id.startsWith("tipo_bomba_") && (
+                <button
+                  type="button"
+                  onClick={() => handleCameraClick(field.id, field.label)}
+                  title={`Adicionar foto — ${field.label}`}
+                  className="text-muted-foreground hover:text-blue-600 transition-colors p-1 rounded"
+                >
+                  <Camera className="h-4 w-4" />
+                </button>
+              )}
+            </div>
             <Select
               value={(value as string) || ""}
               onValueChange={(val) => handleChange(field.id, val)}
@@ -462,7 +474,19 @@ export default function ChecklistForm({
       {parsedFormStructure.sections.map((section) => (
         <Card key={section.id}>
           <CardHeader className="py-3 px-4 bg-muted/30">
-            <CardTitle className="text-sm font-medium">{section.title}</CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-medium">{section.title}</CardTitle>
+              {!readOnly && onAddPhoto && (
+                <button
+                  type="button"
+                  onClick={() => handleCameraClick(section.id, section.title)}
+                  title={`Adicionar foto — ${section.title}`}
+                  className="text-muted-foreground hover:text-blue-600 transition-colors p-1 rounded"
+                >
+                  <Camera className="h-4 w-4" />
+                </button>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="p-4 space-y-3">
             {/* ✅ Items Ok/NOk/NA — renderizados UMA VEZ apenas aqui */}

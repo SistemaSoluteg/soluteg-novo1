@@ -186,6 +186,22 @@ export type Client = typeof clients.$inferSelect;
 export type InsertClient = typeof clients.$inferInsert;
 
 /**
+ * Equipamentos cadastrados por cliente.
+ * Cada linha representa um equipamento físico (bomba ou gerador) do condomínio/empresa.
+ * Usado para gerar automaticamente os checklists da OS mensal.
+ */
+export const clientEquipment = mysqlTable("client_equipment", {
+  id:          int("id").autoincrement().primaryKey(),
+  clientId:    int("clientId").notNull(),              // FK → clients.id
+  type:        mysqlEnum("type", ["bomba", "gerador"]).notNull(), // tipo do equipamento
+  description: varchar("description", { length: 255 }).notNull(), // ex: "Torre 1 - Bloco A"
+  createdAt:   timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ClientEquipment = typeof clientEquipment.$inferSelect;
+export type InsertClientEquipment = typeof clientEquipment.$inferInsert;
+
+/**
  * Técnicos do sistema - cada técnico tem login/senha próprio para o portal
  */
 export const technicians = mysqlTable("technicians", {

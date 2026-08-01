@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Loader2, AlertCircle, CheckCircle, Upload, Plus, FileText } from "lucide-react";
+import { ArrowLeft, Loader2, AlertCircle, CheckCircle, Upload, Plus, FileText, Trash2, Wrench, Zap } from "lucide-react";
 import { maskCnpjCpf, maskPhone, isValidCnpjCpf, isValidPhone } from "@/lib/masks";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
@@ -32,6 +32,43 @@ export default function EditClient() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+
+  // ── Estado do formulário de novo equipamento ─────────────────
+  const [newEquipType, setNewEquipType] = useState<"bomba" | "gerador">("bomba");
+  const [newEquipDesc, setNewEquipDesc] = useState("");
+
+  // ── Equipamentos do cliente ──────────────────────────────────
+  const { data: equipment = [], refetch: refetchEquipment } = trpc.clients.equipment.list.useQuery(
+    { clientId: clientId ?? 0 },
+    { enabled: !!clientId }
+  );
+
+  const addEquipmentMutation = trpc.clients.equipment.add.useMutation({
+    onSuccess: (data) => {
+      refetchEquipment();
+      setNewEquipDesc("");
+      const os = data.monthlyOs;
+      if ("created" in os) {
+        toast.success(`Equipamento adicionado! OS "${os.titulo}" criada automaticamente.`);
+      } else {
+        toast.success("Equipamento adicionado!");
+        if (os.reason === "OS do mês já existe") {
+          toast.info("A OS deste mês já estava criada — checklists anteriores mantidos.");
+        }
+      }
+    },
+    onError: (e: any) => toast.error("Erro ao adicionar equipamento: " + e.message),
+  });
+
+  const removeEquipmentMutation = trpc.clients.equipment.remove.useMutation({
+    onSuccess: () => { refetchEquipment(); toast.success("Equipamento removido."); },
+    onError:   (e: any) => toast.error("Erro ao remover equipamento: " + e.message),
+  });
+
+  const handleAddEquipment = () => {
+    if (!clientId || !newEquipDesc.trim()) return;
+    addEquipmentMutation.mutate({ clientId, type: newEquipType, description: newEquipDesc.trim() });
+  };
 
   // ── Busca dados do cliente e dos laudos associados via tRPC ──────────────────────────
   const { data: client, isLoading, refetch: refetchClient } = trpc.clients.getById.useQuery(
@@ -372,6 +409,92 @@ export default function EditClient() {
               </Button>
             </div>
           </form>
+        </CardContent>
+      </Card>
+
+      {/* ── Seção de Equipamentos do Cliente ─────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Wrench className="h-4 w-4" />
+            Equipamentos
+          </CardTitle>
+          <CardDescription>
+            Bombas e geradores cadastrados. Para cada equipamento será gerado um checklist
+            na OS mensal automática de vistoria.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Lista de equipamentos existentes */}
+          {equipment.length === 0 ? (
+            <p className="text-sm text-slate-500 text-center py-4">
+              Nenhum equipamento cadastrado.
+            </p>
+          ) : (
+            <div className="divide-y rounded-lg border overflow-hidden">
+              {(equipment as any[]).map((equip: any) => (
+                <div key={equip.id} className="flex items-center justify-between px-3 py-2.5 bg-white">
+                  <div className="flex items-center gap-2.5">
+                    {equip.type === "gerador" ? (
+                      <Zap className="h-4 w-4 text-amber-500 shrink-0" />
+                    ) : (
+                      <Wrench className="h-4 w-4 text-blue-500 shrink-0" />
+                    )}
+                    <div>
+                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 mr-2">
+                        {equip.type === "gerador" ? "Gerador" : "Bomba"}
+                      </span>
+                      <span className="text-sm text-slate-800">{equip.description}</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeEquipmentMutation.mutate({ id: equip.id })}
+                    disabled={removeEquipmentMutation.isPending}
+                    className="text-slate-400 hover:text-red-500 transition-colors p-1 rounded"
+                    title="Remover equipamento"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Formulário inline para adicionar equipamento */}
+          <div className="flex flex-col sm:flex-row gap-2 pt-1">
+            <Select
+              value={newEquipType}
+              onValueChange={(v: "bomba" | "gerador") => setNewEquipType(v)}
+            >
+              <SelectTrigger className="w-full sm:w-36 h-10 shrink-0">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="bomba">Bomba</SelectItem>
+                <SelectItem value="gerador">Gerador</SelectItem>
+              </SelectContent>
+            </Select>
+            <Input
+              placeholder="Descrição / Localização (ex: Torre 1 - Subsolo)"
+              value={newEquipDesc}
+              onChange={(e) => setNewEquipDesc(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleAddEquipment()}
+              className="h-10 flex-1"
+            />
+            <Button
+              type="button"
+              onClick={handleAddEquipment}
+              disabled={addEquipmentMutation.isPending || !newEquipDesc.trim()}
+              className="h-10 bg-orange-500 hover:bg-orange-600 shrink-0"
+            >
+              {addEquipmentMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <><Plus className="h-4 w-4 mr-1" />Adicionar</>
+              )}
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
