@@ -16,10 +16,16 @@ export async function getDb() {
       return null;
     }
     try {
-      // Cria o pool explicitamente com timezone UTC fixo.
-      // O mysql2 usa 'local' por padrão — se o VPS tiver timezone America/Sao_Paulo,
-      // todos os timestamps lidos/escritos ficam com 3h de deslocamento.
+      // Cria o pool com timezone UTC explícito no driver (como o mysql2 lê os timestamps)
+      // E força SET time_zone = '+00:00' em cada nova conexão (como o MySQL retorna os timestamps).
+      // Isso garante UTC ponta-a-ponta independente da timezone do servidor MySQL ou do VPS:
+      // - Se MySQL estiver em America/Sao_Paulo, ele passaria a retornar timestamps em UTC
+      // - Se VPS estiver em America/Sao_Paulo, o driver passaria a interpretar como UTC
+      // Sem isso, o mysql2 usa 'local' e qualquer divergência de timezone causa 3h de deslocamento.
       const pool = createPool({ uri: url, timezone: 'Z' });
+      pool.on('connection', (connection) => {
+        connection.query("SET time_zone = '+00:00'");
+      });
       _db = drizzle(pool) as unknown as ReturnType<typeof drizzle>;
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
