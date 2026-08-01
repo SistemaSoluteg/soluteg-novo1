@@ -122,6 +122,10 @@ export function InspectionTaskItem({
     { id: task.id }
   );
 
+  const aiSuggestMutation = trpc.checklists.instances.suggestConclusion.useMutation({
+    onError: (e: any) => toast.error("Erro na sugestão de IA: " + e.message),
+  });
+
   const isCompleted = task.status === "concluida";
 
   const getStatusBadge = (status: string) => {
@@ -289,6 +293,8 @@ export function InspectionTaskItem({
                             }}
                             isSaving={isSavingResponses}
                             readOnly={isCompleted && editingChecklistId !== checklist.id}
+                            checklistId={checklist.id}
+                            onAiSuggest={(id) => aiSuggestMutation.mutateAsync({ checklistInstanceId: id })}
                           />
                         )}
                       </CardContent>

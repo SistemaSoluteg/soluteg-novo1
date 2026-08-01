@@ -102,6 +102,10 @@ export default function InspectionTasksTab({ workOrderId }: InspectionTasksTabPr
     },
   });
 
+  const aiSuggestMutation = trpc.checklists.instances.suggestConclusion.useMutation({
+    onError: (e: any) => toast.error("Erro na sugestão de IA: " + e.message),
+  });
+
   // Mutation para criar anexo a partir de foto tirada no checklist
   const createAttachmentMutation = trpc.workOrders.attachments.create.useMutation({
     onError: (err: { message: string }) => {
@@ -307,6 +311,8 @@ export default function InspectionTasksTab({ workOrderId }: InspectionTasksTabPr
                       isSaving={isSaving}
                       readOnly={!!checklist.isComplete && !isEditing}
                       onAddPhoto={handleAddPhoto}
+                      checklistId={checklist.id}
+                      onAiSuggest={(id) => aiSuggestMutation.mutateAsync({ checklistInstanceId: id })}
                     />
                   )}
                 </CardContent>

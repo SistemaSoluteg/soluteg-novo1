@@ -230,5 +230,13 @@ export const checklistsRouter = router({
         await checklistDb.deleteChecklistInstance(input.id);
         return { success: true, message: "Checklist deletado com sucesso" };
       }),
+
+    // Gera sugestão de conclusão com IA para o campo Observações
+    suggestConclusion: adminLocalProcedure
+      .input(z.object({ checklistInstanceId: z.number() }))
+      .mutation(async ({ input }) => {
+        const { sugerirConclusaoChecklist } = await import("../iaChecklists");
+        return await sugerirConclusaoChecklist(input.checklistInstanceId);
+      }),
   }),
 });

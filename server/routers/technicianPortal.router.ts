@@ -470,5 +470,25 @@ export const technicianPortalRouter = router({
         await checklistDb.deleteChecklistInstance(input.checklistId);
         return { success: true };
       }),
+
+    // Gera sugestão de conclusão com IA — verifica que o checklist pertence ao técnico
+    suggestConclusion: protectedTechnicianProcedure
+      .input(z.object({
+        checklistId: z.number(),
+        workOrderId: z.number(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const os = await technicianDb.getWorkOrderByIdForTechnician(input.workOrderId, ctx.technicianId);
+        if (!os) throw new TRPCError({ code: "NOT_FOUND", message: "OS não encontrada ou acesso negado" });
+        const checklistDb = await import("../checklistsDb");
+        const instance = await checklistDb.getChecklistInstanceById(input.checklistId);
+        if (!instance) throw new TRPCError({ code: "NOT_FOUND", message: "Checklist não encontrado" });
+        const task = await checklistDb.getInspectionTaskById(instance.inspectionTaskId);
+        if (!task || task.workOrderId !== input.workOrderId) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Checklist não pertence a esta OS" });
+        }
+        const { sugerirConclusaoChecklist } = await import("../iaChecklists");
+        return await sugerirConclusaoChecklist(input.checklistId);
+      }),
   }),
 });

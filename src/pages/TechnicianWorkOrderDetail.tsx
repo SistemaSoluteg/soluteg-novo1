@@ -280,6 +280,10 @@ export default function TechnicianWorkOrderDetail() {
     },
   });
 
+  const aiSuggestChecklistMutation = (trpc as any).technicianPortal.checklists.suggestConclusion.useMutation({
+    onError: (e: any) => toast.error("Erro na sugestão de IA: " + e.message),
+  });
+
   const addChecklistMutation = (trpc as any).technicianPortal.checklists.addChecklist.useMutation({
     onSuccess: () => {
       toast.success("Checklist adicionado!");
@@ -965,6 +969,8 @@ export default function TechnicianWorkOrderDetail() {
                             isSaving={isSaving}
                             readOnly={!!checklist.isComplete}
                             onAddPhoto={handleAddPhotoFromChecklist}
+                            checklistId={checklist.id}
+                            onAiSuggest={(id) => aiSuggestChecklistMutation.mutateAsync({ checklistId: id, workOrderId: workOrderId! })}
                           />
                         )}
                       </div>
