@@ -58,23 +58,9 @@ const inspecaoVisualGerador: ChecklistItem[] = [
 ];
 
 // Template unificado de Bomba — cobre Recalque, Dreno, Piscina e Incêndio.
-// O tipo é selecionado como primeiro campo do formulário, eliminando a necessidade
-// de 4 templates separados praticamente idênticos.
+// Cada bomba tem seu próprio tipo, potência e corrente na seção Dados Técnicos.
 export const bombaTemplate: ChecklistTemplateStructure = {
   sections: [
-    {
-      id: 'identificacao',
-      title: 'Identificação',
-      fields: [
-        {
-          id: 'tipo_bomba',
-          label: 'Tipo de Bomba',
-          type: 'select',
-          options: ['Recalque', 'Dreno', 'Piscina', 'Incêndio'],
-          required: true,
-        },
-      ],
-    },
     {
       id: 'inspecao_visual',
       title: 'Inspeção Visual',
@@ -84,13 +70,25 @@ export const bombaTemplate: ChecklistTemplateStructure = {
       id: 'dados_tecnicos',
       title: 'Dados Técnicos',
       fields: [
-        { id: 'tensao', label: 'Tensão', type: 'select', options: ['127V', '220V', '380V', '440V'], required: true },
-        { id: 'fases', label: 'Fases', type: 'select', options: ['Monofásico', 'Bifásico', 'Trifásico'], required: true },
+        { id: 'tensao',     label: 'Tensão', type: 'select', options: ['127V', '220V', '380V', '440V'], required: true },
+        { id: 'fases',      label: 'Fases',  type: 'select', options: ['Monofásico', 'Bifásico', 'Trifásico'], required: true },
         { id: 'num_bombas', label: 'Quantidade de Bombas', type: 'select', options: ['1', '2', '3', '4'], required: true },
-        { id: 'corrente_bomba_1', label: 'Corrente Bomba 1', type: 'number', unit: 'A', required: true },
-        { id: 'corrente_bomba_2', label: 'Corrente Bomba 2', type: 'number', unit: 'A', required: false, conditional: { field: 'num_bombas', operator: 'gte', value: 2 } },
-        { id: 'corrente_bomba_3', label: 'Corrente Bomba 3', type: 'number', unit: 'A', required: false, conditional: { field: 'num_bombas', operator: 'gte', value: 3 } },
-        { id: 'corrente_bomba_4', label: 'Corrente Bomba 4', type: 'number', unit: 'A', required: false, conditional: { field: 'num_bombas', operator: 'gte', value: 4 } },
+        // Bomba 1 — sempre visível
+        { id: 'tipo_bomba_1',    label: 'Tipo da Bomba 1',    type: 'select', options: ['Recalque', 'Dreno', 'Piscina', 'Incêndio'], required: true },
+        { id: 'potencia_bomba_1', label: 'Potência Motor 1',  type: 'number', unit: 'CV', required: true },
+        { id: 'corrente_bomba_1', label: 'Corrente Bomba 1',  type: 'number', unit: 'A',  required: true },
+        // Bomba 2
+        { id: 'tipo_bomba_2',    label: 'Tipo da Bomba 2',    type: 'select', options: ['Recalque', 'Dreno', 'Piscina', 'Incêndio'], required: false, conditional: { field: 'num_bombas', operator: 'gte', value: 2 } },
+        { id: 'potencia_bomba_2', label: 'Potência Motor 2',  type: 'number', unit: 'CV', required: false, conditional: { field: 'num_bombas', operator: 'gte', value: 2 } },
+        { id: 'corrente_bomba_2', label: 'Corrente Bomba 2',  type: 'number', unit: 'A',  required: false, conditional: { field: 'num_bombas', operator: 'gte', value: 2 } },
+        // Bomba 3
+        { id: 'tipo_bomba_3',    label: 'Tipo da Bomba 3',    type: 'select', options: ['Recalque', 'Dreno', 'Piscina', 'Incêndio'], required: false, conditional: { field: 'num_bombas', operator: 'gte', value: 3 } },
+        { id: 'potencia_bomba_3', label: 'Potência Motor 3',  type: 'number', unit: 'CV', required: false, conditional: { field: 'num_bombas', operator: 'gte', value: 3 } },
+        { id: 'corrente_bomba_3', label: 'Corrente Bomba 3',  type: 'number', unit: 'A',  required: false, conditional: { field: 'num_bombas', operator: 'gte', value: 3 } },
+        // Bomba 4
+        { id: 'tipo_bomba_4',    label: 'Tipo da Bomba 4',    type: 'select', options: ['Recalque', 'Dreno', 'Piscina', 'Incêndio'], required: false, conditional: { field: 'num_bombas', operator: 'gte', value: 4 } },
+        { id: 'potencia_bomba_4', label: 'Potência Motor 4',  type: 'number', unit: 'CV', required: false, conditional: { field: 'num_bombas', operator: 'gte', value: 4 } },
+        { id: 'corrente_bomba_4', label: 'Corrente Bomba 4',  type: 'number', unit: 'A',  required: false, conditional: { field: 'num_bombas', operator: 'gte', value: 4 } },
       ],
     },
     {

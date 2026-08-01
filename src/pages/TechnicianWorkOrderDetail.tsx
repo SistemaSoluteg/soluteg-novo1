@@ -906,8 +906,8 @@ export default function TechnicianWorkOrderDetail() {
                     const localDraftKey = `offline_cl_${workOrderId}_${checklist.id}`;
                     const localDraftRaw = localStorage.getItem(localDraftKey);
                     const responses = localDraftRaw ? JSON.parse(localDraftRaw) : serverResponses;
-                    // tipo_bomba vem das respostas salvas no template unificado de Bomba
-                    const tipoBomba = responses?.tipo_bomba as string | undefined;
+                    // tipo_bomba_1 (novo template) ou tipo_bomba (legado)
+                    const tipoBomba = (responses?.tipo_bomba_1 ?? responses?.tipo_bomba) as string | undefined;
                     const isSaving = savingChecklistId === checklist.id && updateResponsesMutation.isPending;
 
                     return (

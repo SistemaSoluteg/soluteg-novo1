@@ -50,12 +50,20 @@ function formatLabel(raw: string): string {
     corrente_2:        'Corrente 2',
     corrente_3:        'Corrente 3',
     corrente_4:        'Corrente 4',
-    // Aliases do template unificado de Bomba
-    corrente_bomba_1:  'Corrente 1',
-    corrente_bomba_2:  'Corrente 2',
-    corrente_bomba_3:  'Corrente 3',
-    corrente_bomba_4:  'Corrente 4',
-    potencia:          'Potência',
+    // Aliases do template unificado de Bomba (por bomba)
+    corrente_bomba_1:   'Corrente 1',
+    corrente_bomba_2:   'Corrente 2',
+    corrente_bomba_3:   'Corrente 3',
+    corrente_bomba_4:   'Corrente 4',
+    tipo_bomba_1:       'Tipo Bomba 1',
+    tipo_bomba_2:       'Tipo Bomba 2',
+    tipo_bomba_3:       'Tipo Bomba 3',
+    tipo_bomba_4:       'Tipo Bomba 4',
+    potencia_bomba_1:   'Potência Motor 1',
+    potencia_bomba_2:   'Potência Motor 2',
+    potencia_bomba_3:   'Potência Motor 3',
+    potencia_bomba_4:   'Potência Motor 4',
+    potencia:           'Potência',
     marca:             'Marca',
     modelo:            'Modelo',
     rpm:               'RPM',
@@ -85,6 +93,7 @@ function splitValueUnit(key: string, value: any): [string, string] {
 
   if (k.startsWith('corrente'))                    return [cleanValue, 'A'];
   if (k.startsWith('tensao'))                      return [cleanValue, 'V'];
+  if (k.startsWith('potencia_bomba'))              return [cleanValue, 'CV'];
   if (k === 'potencia')                            return [cleanValue, 'CV'];
   if (k === 'pressao')                             return [cleanValue, 'bar'];
   if (k === 'vazao')                               return [cleanValue, 'm³/h'];
@@ -334,7 +343,8 @@ export async function generateWorkOrderPDF(workOrderId: number): Promise<Buffer>
                 try {
                   parsedResponses = typeof checklist.responses === 'string'
                     ? JSON.parse(checklist.responses) : checklist.responses;
-                  tipoBomba   = parsedResponses.tipo_bomba as string | undefined;
+                  // Tenta tipo_bomba_1 (novo template) e cai em tipo_bomba (legado)
+                  tipoBomba   = (parsedResponses.tipo_bomba_1 ?? parsedResponses.tipo_bomba) as string | undefined;
                   okNokNaKeys = new Set(Object.keys(parsedResponses).filter(k => {
                     const v = String(parsedResponses[k]).toLowerCase();
                     return v === 'ok' || v === 'nok' || v === 'na';

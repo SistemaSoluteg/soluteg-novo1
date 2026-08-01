@@ -214,8 +214,8 @@ export default function InspectionTasksTab({ workOrderId }: InspectionTasksTabPr
             }
 
             const responses = checklist.responses ? JSON.parse(checklist.responses) : {};
-            // tipo_bomba vem das respostas salvas (campo dentro do template unificado de Bomba)
-            const tipoBomba = responses?.tipo_bomba as string | undefined;
+            // tipo_bomba_1 (novo template) ou tipo_bomba (legado)
+            const tipoBomba = (responses?.tipo_bomba_1 ?? responses?.tipo_bomba) as string | undefined;
             const isSaving = savingChecklistId === checklist.id && updateResponsesMutation.isPending;
             const isEditing = editingChecklistId === checklist.id;
 
