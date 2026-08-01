@@ -1,5 +1,6 @@
 import { eq, desc, sql, like, and, gte, lte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
+import { createPool } from "mysql2/promise";
 import { InsertUser, users, reports, InsertReport, invites, InsertInvite, Invite, admins, InsertAdmin, Admin, inspectionReports, InsertInspectionReport, InspectionReport, clients, InsertClient, Client, clientDocuments, InsertClientDocument, ClientDocument, workOrders, InsertWorkOrder, WorkOrder } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import crypto from "crypto";
@@ -15,7 +16,11 @@ export async function getDb() {
       return null;
     }
     try {
-      _db = drizzle(url);
+      // Cria o pool explicitamente com timezone UTC fixo.
+      // O mysql2 usa 'local' por padrão — se o VPS tiver timezone America/Sao_Paulo,
+      // todos os timestamps lidos/escritos ficam com 3h de deslocamento.
+      const pool = createPool({ uri: url, timezone: 'Z' });
+      _db = drizzle(pool) as unknown as ReturnType<typeof drizzle>;
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;

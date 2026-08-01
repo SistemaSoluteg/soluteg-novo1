@@ -257,33 +257,34 @@ export async function getCashBalance() {
 export async function getDashboardStats() {
   const db = await getPdvDb();
 
-  // Limites do dia de "hoje" no fuso America/Sao_Paulo. Calculamos no Node e
-  // filtramos no SQL — assim NÃO baixamos a tabela de vendas inteira. Como a
-  // coluna é TIMESTAMP (instante), 00:00 BRT equivale a 03:00 UTC; o intervalo
-  // [startOfDay, endOfDay) seleciona exatamente as mesmas vendas que a antiga
-  // comparação de data feita em JS.
+  // Limites do dia de "hoje" no fuso America/Sao_Paulo. BRT = UTC-3 fixo.
+  // Derivamos a data-calendário subtraindo 3h ANTES de extrair o YYYY-MM-DD —
+  // senão, entre 21:00 e 23:59 BRT, o UTC já estaria no dia seguinte e
+  // "Vendas Hoje" mostraria o dia errado bem na hora do fechamento do caixa.
   //
-  // PREMISSA: BRT = UTC-3 fixo (horário de verão abolido em 2019); revisar se o
-  // DST voltar. Derivamos a data-calendário subtraindo 3h ANTES de extrair o
-  // YYYY-MM-DD — senão, entre 21:00 e 23:59 BRT, o UTC já estaria no dia seguinte
-  // e "Vendas Hoje" mostraria o dia errado bem na hora do fechamento do caixa.
+  // As datas são passadas via sql.raw() em formato UTC explícito para evitar
+  // que o mysql2 reconverta o objeto Date usando o timezone do servidor.
   const now = new Date();
   const brtNow = new Date(now.getTime() - 3 * 60 * 60 * 1000);
   const todayStr = brtNow.toISOString().split("T")[0]; // "YYYY-MM-DD" em BRT
-  const startOfDay = new Date(`${todayStr}T03:00:00.000Z`); // 00:00 BRT
-  const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000); // 00:00 BRT do dia seguinte
+
+  const startOfDay = new Date(`${todayStr}T03:00:00.000Z`); // 00:00 BRT = 03:00 UTC
+  const endOfDay   = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000); // 00:00 BRT amanhã
+  // sql.raw() com ISO UTC explícito — evita que o mysql2 reconverta via timezone local
+  const startRaw = sql.raw(`'${startOfDay.toISOString().slice(0, 19).replace("T", " ")}'`);
+  const endRaw   = sql.raw(`'${endOfDay.toISOString().slice(0, 19).replace("T", " ")}'`);
 
   const [todayAgg, lowStock, topProducts, balance] = await Promise.all([
     // Total e contagem das vendas de hoje (ignorando canceladas), agregados no SQL.
+    // Usamos sql.raw() para as datas — o mysql2 com timezone local causaria
+    // deslocamento de 3h ao serializar objetos Date como parâmetros.
+    // Usamos "canceled != 1" em vez de "canceled = 0" para capturar também
+    // vendas migradas do TiDB que possam ter canceled = NULL.
     db.select({
       total: sql<string | null>`SUM(${sales.total})`,
       count: sql<number>`COUNT(*)`,
     }).from(sales).where(
-      and(
-        gte(sales.createdAt, startOfDay),
-        lt(sales.createdAt, endOfDay),
-        eq(sales.canceled, false),
-      )
+      sql`${sales.createdAt} >= ${startRaw} AND ${sales.createdAt} < ${endRaw} AND (${sales.canceled} = 0 OR ${sales.canceled} IS NULL)`
     ),
     getLowStockProducts(),
     db.select({
