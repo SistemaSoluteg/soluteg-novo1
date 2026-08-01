@@ -414,5 +414,61 @@ export const technicianPortalRouter = router({
         await checklistDb.updateChecklistResponses(input.checklistId, input.responses, input.isComplete);
         return { success: true };
       }),
+
+    // Adiciona um novo checklist à OS — cria a inspectionTask automaticamente se não existir
+    addChecklist: protectedTechnicianProcedure
+      .input(z.object({
+        workOrderId:  z.number(),
+        templateId:   z.number().int().positive(),
+        customTitle:  z.string().min(1).max(255),
+        brand:        z.string().max(100).optional(),
+        power:        z.string().max(50).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const os = await technicianDb.getWorkOrderByIdForTechnician(input.workOrderId, ctx.technicianId);
+        if (!os) throw new TRPCError({ code: "NOT_FOUND", message: "OS não encontrada ou acesso negado" });
+        if (os.status !== "em_andamento" && os.status !== "pausada") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "A OS precisa estar em andamento para adicionar checklists." });
+        }
+        const checklistDb = await import("../checklistsDb");
+        const template = await checklistDb.getTemplateById(input.templateId);
+        if (!template) throw new TRPCError({ code: "NOT_FOUND", message: "Template não encontrado" });
+
+        // Reutiliza a primeira inspectionTask existente ou cria uma nova
+        const tasks = await checklistDb.getInspectionTasksByWorkOrder(input.workOrderId);
+        const taskId = tasks.length > 0
+          ? tasks[0].id
+          : await checklistDb.createInspectionTask({ workOrderId: input.workOrderId, title: "Checklists de Equipamentos" });
+
+        const instanceId = await checklistDb.createChecklistInstance({
+          inspectionTaskId: taskId,
+          templateId:       input.templateId,
+          customTitle:      input.customTitle,
+          brand:            input.brand,
+          power:            input.power,
+        });
+
+        return { id: instanceId };
+      }),
+
+    // Remove um checklist da OS — verifica ownership antes de deletar
+    deleteChecklist: protectedTechnicianProcedure
+      .input(z.object({
+        checklistId: z.number(),
+        workOrderId: z.number(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const os = await technicianDb.getWorkOrderByIdForTechnician(input.workOrderId, ctx.technicianId);
+        if (!os) throw new TRPCError({ code: "NOT_FOUND", message: "OS não encontrada ou acesso negado" });
+        const checklistDb = await import("../checklistsDb");
+        const instance = await checklistDb.getChecklistInstanceById(input.checklistId);
+        if (!instance) throw new TRPCError({ code: "NOT_FOUND", message: "Checklist não encontrado" });
+        const task = await checklistDb.getInspectionTaskById(instance.inspectionTaskId);
+        if (!task || task.workOrderId !== input.workOrderId) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Checklist não pertence a esta OS" });
+        }
+        await checklistDb.deleteChecklistInstance(input.checklistId);
+        return { success: true };
+      }),
   }),
 });
