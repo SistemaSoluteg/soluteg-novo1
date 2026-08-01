@@ -86,6 +86,7 @@ export type PendingMedia = {
   blob: Blob;           // Conteúdo binário da foto
   mimeType: string;     // ex: "image/jpeg"
   fileName: string;     // nome original do arquivo
+  caption?: string;     // legenda opcional (ex: vinda do checklist)
   createdAt: number;    // Date.now()
   uploaded: boolean;    // true = já enviado ao Cloudinary
   cloudinaryUrl?: string; // URL final após upload bem-sucedido

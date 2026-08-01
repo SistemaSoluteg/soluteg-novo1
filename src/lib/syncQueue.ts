@@ -291,6 +291,7 @@ export async function processMediaQueue(): Promise<MediaQueueResult> {
           fileType:    file.fileType,
           fileSize:    file.fileSize,
           category:    "during",
+          description: media.caption || undefined,
         });
 
         // Marca como enviado — o Blob fica por 7 dias para consulta offline

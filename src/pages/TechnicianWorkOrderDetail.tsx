@@ -400,8 +400,24 @@ export default function TechnicianWorkOrderDetail() {
     if (!workOrderId) return;
 
     if (!isOnline) {
-      toast.error("Fotos precisam de conexão com a internet. Conecte-se e tente novamente.");
-      throw new Error("offline");
+      try {
+        const blob = await compressImage(file);
+        await addPendingMedia({
+          orderId:   workOrderId,
+          blob,
+          mimeType:  file.type,
+          fileName:  file.name,
+          caption:   caption || undefined,
+          createdAt: Date.now(),
+          uploaded:  false,
+          retries:   0,
+        });
+        toast.info("Foto salva localmente — será enviada ao conectar");
+      } catch {
+        toast.error("Erro ao salvar foto offline.");
+        throw new Error("offline");
+      }
+      return;
     }
 
     setUploading(true);
