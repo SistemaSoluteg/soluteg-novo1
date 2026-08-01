@@ -2,7 +2,7 @@ import * as db from "../db";
 import { adminLocalProcedure, router } from "../_core/trpc";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { createMonthlyOsForClient } from "../monthlyOsJob";
+import { addEquipmentToMonthlyOs } from "../monthlyOsJob";
 import { hashPassword } from "../adminAuth";
 
 export const clientsRouter = router({
@@ -229,8 +229,11 @@ export const clientsRouter = router({
           description: input.description,
         });
 
-        // Tenta criar OS do mês corrente (idempotente — pula se já existe)
-        const osResult = await createMonthlyOsForClient(ctx.adminId, input.clientId);
+        // Busca ou cria a OS do mês e adiciona checklist para este equipamento
+        const osResult = await addEquipmentToMonthlyOs(ctx.adminId, input.clientId, {
+          type:        input.type,
+          description: input.description,
+        });
 
         return { id, monthlyOs: osResult };
       }),

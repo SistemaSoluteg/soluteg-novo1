@@ -48,13 +48,10 @@ export default function EditClient() {
       refetchEquipment();
       setNewEquipDesc("");
       const os = data.monthlyOs;
-      if ("created" in os) {
+      if (os.osCreated) {
         toast.success(`Equipamento adicionado! OS "${os.titulo}" criada automaticamente.`);
       } else {
-        toast.success("Equipamento adicionado!");
-        if (os.reason === "OS do mês já existe") {
-          toast.info("A OS deste mês já estava criada — checklists anteriores mantidos.");
-        }
+        toast.success(`Equipamento adicionado! Checklist incluído na OS "${os.titulo}".`);
       }
     },
     onError: (e: any) => toast.error("Erro ao adicionar equipamento: " + e.message),
