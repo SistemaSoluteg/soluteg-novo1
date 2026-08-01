@@ -7,7 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { MessageSquare, Trash2, Lock, Unlock } from "lucide-react";
+import { MessageSquare, Trash2, Lock, Unlock, Sparkles, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 interface WorkOrderCommentsProps {
@@ -42,6 +42,16 @@ export default function WorkOrderComments({ workOrderId }: WorkOrderCommentsProp
     },
     onError: (error) => {
       toast.error(`Erro ao remover comentário: ${error.message}`);
+    },
+  });
+
+  const aiSuggestMutation = trpc.workOrders.comments.suggestForClient.useMutation({
+    onSuccess: (data) => {
+      setNewComment(data.comentario);
+      toast.success("Sugestão aplicada — revise antes de enviar");
+    },
+    onError: (error) => {
+      toast.error(`Erro na sugestão de IA: ${error.message}`);
     },
   });
 
@@ -90,13 +100,29 @@ export default function WorkOrderComments({ workOrderId }: WorkOrderCommentsProp
       <CardContent className="space-y-6">
         {/* New Comment Form */}
         <div className="space-y-3">
-          <Textarea
-            placeholder="Adicione um comentário ou anotação..."
-            value={newComment}
-            onChange={(e) => setNewComment(e.target.value)}
-            rows={3}
-            className="resize-none"
-          />
+          <div className="relative">
+            <Textarea
+              placeholder="Adicione um comentário ou anotação..."
+              value={newComment}
+              onChange={(e) => setNewComment(e.target.value)}
+              rows={3}
+              className="resize-none pr-10"
+            />
+            {/* Botão IA — só visível quando o comentário será público (visível ao cliente) */}
+            {!isInternal && (
+              <button
+                type="button"
+                title="Sugerir comentário para o cliente com IA"
+                disabled={aiSuggestMutation.isPending}
+                onClick={() => aiSuggestMutation.mutate({ workOrderId })}
+                className="absolute top-2 right-2 text-muted-foreground hover:text-purple-600 transition-colors p-1 rounded disabled:opacity-50"
+              >
+                {aiSuggestMutation.isPending
+                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                  : <Sparkles className="h-4 w-4" />}
+              </button>
+            )}
+          </div>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Switch
