@@ -2,6 +2,7 @@ import pkg from 'whatsapp-web.js';
 const { Client, LocalAuth, MessageMedia } = pkg as any;
 import qrcode from 'qrcode-terminal';
 import QRCode from 'qrcode';
+import { exec } from 'child_process';
 
 // Configuração do Cliente Puppeteer para VPS
 const client = new Client({
@@ -111,6 +112,10 @@ async function handleInitError(err: any) {
   if (isOldSession) {
     console.log('🔄 Sessão antiga do browser detectada. Destruindo e reinicializando...');
     try { await client.destroy(); } catch (_) {}
+    // SIGKILL no Chrome caso destroy() não tenha sido suficiente
+    await new Promise<void>((resolve) => {
+      exec('pkill -9 -f chromium 2>/dev/null; pkill -9 -f chrome 2>/dev/null; true', () => resolve());
+    });
     await new Promise(r => setTimeout(r, 5000));
     client.initialize().catch((e: any) => {
       console.error('❌ Falha permanente na inicialização do WhatsApp:', e?.message);
