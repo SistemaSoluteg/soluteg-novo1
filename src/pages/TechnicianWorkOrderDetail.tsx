@@ -56,6 +56,7 @@ import { enqueueMutation } from "@/lib/syncQueue";
 import {
   addPendingMedia,
   getPendingMediaByOrder,
+  getPendingMutations,
   saveOrderDetail,
   type PendingMedia,
 } from "@/lib/offlineDB";
@@ -235,18 +236,29 @@ export default function TechnicianWorkOrderDetail() {
         refetchAttachments?.(); // Atualiza a lista de fotos do servidor
       }
 
-      // Refetch checklists e só ENTÃO limpa o localStorage — garante que o servidor
-      // já recebeu e confirmou os dados antes de remover o rascunho offline.
-      // Se houve erros na fila, mantém o rascunho para não perder dados não sincronizados.
+      // Refetch checklists e só ENTÃO limpa o localStorage.
+      // Condição de segurança dupla: errors === 0 E nenhuma mutation de checklist
+      // ainda pendente na fila. Sem a segunda verificação, falhas temporárias
+      // (retries < MAX_RETRIES) disparam sync-complete com errors=0 e apagam o
+      // rascunho antes da mutation ter sido confirmada pelo servidor.
       const p = refetchChecklists?.() ?? Promise.resolve();
-      p.then(() => {
+      p.then(async () => {
         if (errors === 0 && workOrderId) {
+          const pending = await getPendingMutations();
+          const checklistStillPending = pending.some(
+            m => m.type === "updateChecklistResponses"
+              && (m.payload as any)?.workOrderId === workOrderId
+          );
+          if (checklistStillPending) {
+            console.log("[OFFLINE] Rascunho de checklist mantido — mutation ainda pendente na fila");
+            return;
+          }
           const prefix = `offline_cl_${workOrderId}_`;
           for (let i = localStorage.length - 1; i >= 0; i--) {
             const key = localStorage.key(i);
             if (key?.startsWith(prefix)) {
               localStorage.removeItem(key);
-              console.log(`[OFFLINE] Rascunho de checklist removido após sync: ${key}`);
+              console.log(`[OFFLINE] Rascunho de checklist removido após sync confirmado: ${key}`);
             }
           }
         }
