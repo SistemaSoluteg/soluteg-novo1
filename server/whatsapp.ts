@@ -101,14 +101,17 @@ if (process.env.WHATSAPP_DISABLED !== 'true') {
 }
 
 // Quando o PM2 reinicia o servidor mas o processo do Chromium sobrevive,
-// o whatsapp-web.js falha ao tentar registrar funções que já existem na página.
-// Neste caso: destrói o cliente (fecha o browser) e tenta novamente do zero.
+// o whatsapp-web.js falha ao tentar registrar funções que já existem na página
+// ("already exists") OU com "The browser is already running" quando o destroy()
+// não matou o processo Chrome a tempo. Ambos os casos: destrói e reinicializa.
 async function handleInitError(err: any) {
   console.error('❌ Erro ao inicializar WhatsApp:', err?.message);
-  if (err?.message?.includes('already exists')) {
+  const msg: string = err?.message ?? '';
+  const isOldSession = msg.includes('already exists') || msg.includes('The browser is already running');
+  if (isOldSession) {
     console.log('🔄 Sessão antiga do browser detectada. Destruindo e reinicializando...');
     try { await client.destroy(); } catch (_) {}
-    await new Promise(r => setTimeout(r, 3000));
+    await new Promise(r => setTimeout(r, 5000));
     client.initialize().catch((e: any) => {
       console.error('❌ Falha permanente na inicialização do WhatsApp:', e?.message);
     });
@@ -139,10 +142,10 @@ function triggerReconnect() {
     try { await client.destroy(); } catch (_) {}
     setTimeout(() => {
       console.log('🔄 Reinicializando cliente WhatsApp após erro de frame...');
-      client.initialize().catch((e: any) => {
-        console.error('❌ Falha ao reinicializar após erro de frame:', e?.message);
-      });
       reconnecting = false;
+      // Usa handleInitError para tratar "browser already running" caso o
+      // destroy() não tenha matado o Chrome a tempo
+      client.initialize().catch(handleInitError);
     }, 3000);
   }, 15000);
 }
