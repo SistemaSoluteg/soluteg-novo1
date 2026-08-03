@@ -108,9 +108,8 @@ export const budgetsRouter = router({
       const budgetsDb = await import("../budgetsDb");
       await budgetsDb.upsertBudgetItems(input.budgetId, input.items);
       const itemsTotal = await budgetsDb.getTotalItemsValue(input.budgetId);
-      const budget = await budgetsDb.getBudgetById(input.budgetId);
-      const labor = budget?.laborValue ?? 0;
-      await budgetsDb.updateBudget(input.budgetId, { totalValue: itemsTotal + labor }, "system");
+      // Mão de obra agora é um item na lista — totalValue = soma dos itens diretamente
+      await budgetsDb.updateBudget(input.budgetId, { totalValue: itemsTotal }, "system");
       return { success: true, message: "Itens salvos com sucesso" };
     }),
 

@@ -50,7 +50,7 @@ export const adminLocalProcedure = t.procedure.use(
     const { ctx, next } = opts;
 
     if (!ctx.adminId) {
-      throw new TRPCError({ code: "UNAUTHORIZED", message: "Admin não autenticado" });
+      throw new TRPCError({ code: "UNAUTHORIZED", message: UNAUTHED_ERR_MSG });
     }
 
     const adminId = ctx.adminId as number;

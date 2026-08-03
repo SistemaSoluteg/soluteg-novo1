@@ -9,13 +9,13 @@
  *   alarm1 → WhatsApp admin + cliente: orientar verificação de cisterna, painel, disjuntor, eletroboias
  *   alarm2 → WhatsApp admin + cliente + cria OS emergencial automaticamente
  *   sci    → WhatsApp admin + cliente (OS já criada no alarm2)
- *   alarm3_boia → WhatsApp admin: pane na boia de corte da bomba (habilitável por sensor)
+ *   alarm3_boia → WhatsApp admin + técnico: pane na boia de corte da bomba (habilitável por sensor)
  *
  * Caixa Inferior:
  *   alarm1 → WhatsApp admin + cliente: orientar verificar entrada de água, racionar
  *   alarm2 → WhatsApp admin + cliente + cria OS emergencial (possível falha na boia inferior)
  *   sci    → WhatsApp admin + cliente (OS já criada no alarm2)
- *   alarm3_boia → WhatsApp admin: pane na boia mecânica (habilitável por sensor)
+ *   alarm3_boia → WhatsApp admin + técnico: pane na boia mecânica (habilitável por sensor)
  *
  * Garantia de entrega:
  *   - Se WhatsApp offline: salva delivered=0 no log → reenviado ao reconectar
@@ -27,7 +27,9 @@ import { getDb } from "./db";
 import type { SensorAlertState, SensorZone } from "./mqttService";
 import { sendPushToUser, type PushPayload } from "./lib/webPush";
 
-const CONFIRM = 5;
+const CONFIRM = 5;          // alarm1, drop_step — filtro de ruído (2,5 min de queda)
+const CONFIRM_CRITICAL = 1; // alarm2, sci_reserve, filling, level_restored — dispara no primeiro flush
+const CONFIRM_BOIA = 4;     // boia_fault — 2 min em alarm2 sem recuperação
 
 type AlertType =
   | "alarm1"
@@ -56,6 +58,7 @@ interface SensorConfig {
   technicianName: string | null;
   dropStepPct: number;
   alertPhone: string | null;
+  alertPhone2: string | null;
 }
 
 function determineZone(level: number, cfg: SensorConfig): SensorZone {
@@ -90,7 +93,7 @@ function buildAlarm1Message(tankType: "superior" | "inferior", clientName: strin
     base,
     ``,
     `Verifique a entrada de água da rede pública no prédio.`,
-    `Pode haver queda de pressão ou falta d'água.`,
+    `Pode haver queda de pressão, registro fechado ou falta d'água.`,
     `Oriente os moradores a racionar o consumo.`,
   ].join("\n");
 }
@@ -103,7 +106,13 @@ function buildAlarm2Message(tankType: "superior" | "inferior", clientName: strin
       `🚨 NÍVEL CRÍTICO — Caixa d'Água Superior`,
       base,
       ``,
-      `Nível crítico detectado.`,
+      `Verifique:`,
+      `• Nível da cisterna (caixa inferior)`,
+      `• Alarmes no painel elétrico`,
+      `• Se o disjuntor da bomba está ligado`,
+      `• Se houve queda de energia`,
+      `• Teste as eletroboias`,
+      ``,
       `OS emergencial criada automaticamente.`,
       `Técnico será acionado.`,
     ].join("\n");
@@ -113,9 +122,12 @@ function buildAlarm2Message(tankType: "superior" | "inferior", clientName: strin
     `🚨 NÍVEL CRÍTICO — Cisterna (Caixa Inferior)`,
     base,
     ``,
-    `ATENÇÃO: Possível falha na boia inferior.`,
-    `DESLIGAR IMEDIATAMENTE A BOMBA DE RECALQUE.`,
-    `OS emergencial criada — técnico será acionado para troca da boia.`,
+    `ATENÇÃO: Não está entrando água no condomínio.`,
+    `Pode haver queda de pressão, registro fechado ou falta d'água.`,
+    `Oriente os moradores a racionar o consumo.`,
+    `SE A BOMBA DE RECALQUE ainda estiver ligada, verificar chave de nível.`,
+    ``,
+    `OS emergencial criada — técnico será acionado.`,
   ].join("\n");
 }
 
@@ -243,7 +255,7 @@ export async function checkAndSendAlerts(params: {
       SELECT
         s.id, s.adminId, s.clientId, s.tankType, s.deadVolumePct,
         s.alarm1Pct, s.alarm2Pct, s.alarm3BoiaPct, s.alarm3BoiaEnabled,
-        s.technicianId, s.dropStepPct, s.alertPhone,
+        s.technicianId, s.dropStepPct, s.alertPhone, s.alertPhone2,
         c.name AS clientName, c.phone AS clientPhone,
         t.name AS technicianName, t.phone AS technicianPhone
       FROM waterTankSensors s
@@ -272,7 +284,6 @@ export async function checkAndSendAlerts(params: {
       // Se o cliente tiver o portal PWA com notificações ativas, entregamos via push.
       // Se o push for bem-sucedido, removemos o telefone do cliente da lista WhatsApp
       // (admin e técnico ainda recebem WhatsApp normalmente).
-      // O sistema de retry do waterTankAlertLog não é alterado.
       let clientPushDelivered = false;
       if (cfg.clientId) {
         try {
@@ -297,7 +308,6 @@ export async function checkAndSendAlerts(params: {
       }
 
       // Remove o telefone do cliente da lista WhatsApp se push foi entregue
-      // Técnico e alertPhone continuam recebendo WhatsApp
       let phonesToNotify = phones;
       if (clientPushDelivered && cfg.clientPhone) {
         phonesToNotify = phones.filter(p => p !== cfg.clientPhone);
@@ -348,101 +358,134 @@ export async function checkAndSendAlerts(params: {
       console.log(`[ALERTA CAIXA] ${alertType.toUpperCase()} — ${tankName} (${cfg.tankType}): ${currentLevel}% | delivered=${delivered}`);
     }
 
-    // Destinatários padrão: cliente + telefone extra do sensor + técnico
+    // Destinatários: cliente + alertPhone + alertPhone2 + técnico
     const getPhones = (): string[] => {
       const phones: string[] = [];
       if (cfg.clientPhone) phones.push(cfg.clientPhone);
-      if (cfg.alertPhone && cfg.alertPhone !== cfg.clientPhone) phones.push(cfg.alertPhone);
+      if (cfg.alertPhone && !phones.includes(cfg.alertPhone)) phones.push(cfg.alertPhone);
+      if (cfg.alertPhone2 && !phones.includes(cfg.alertPhone2)) phones.push(cfg.alertPhone2);
       if (cfg.technicianPhone && !phones.includes(cfg.technicianPhone)) phones.push(cfg.technicianPhone);
       return phones;
     };
 
-    // Destinatários admin/técnico (sem cliente) — para alertas operacionais
+    // Destinatários sem cliente — usado só no alarm3_boia (pane de boia)
     const getAdminPhones = (): string[] => {
       const phones: string[] = [];
       if (cfg.alertPhone) phones.push(cfg.alertPhone);
       else if (cfg.clientPhone) phones.push(cfg.clientPhone);
+      if (cfg.alertPhone2 && !phones.includes(cfg.alertPhone2)) phones.push(cfg.alertPhone2);
       if (cfg.technicianPhone && !phones.includes(cfg.technicianPhone)) phones.push(cfg.technicianPhone);
       return phones;
     };
 
     // ── DESCENDO ─────────────────────────────────────────────────────────────
 
-    if (isGoingDown && state.consecutiveDownCount >= CONFIRM) {
+    if (isGoingDown) {
 
-      // SCI — reserva de incêndio (OS já criada no alarm2 — só notifica)
-      if (zone === "sci" && previousZone !== "sci") {
-        await fire("sci_reserve", cfg.deadVolumePct, "down", "Consumo da reserva SCI", getPhones());
-        state.currentZone = "sci";
-      }
+      // Alarm2 e SCI disparam com CONFIRM_CRITICAL (1 flush) — nível crítico exige resposta imediata.
+      // Não aguardar os 5 flushes do CONFIRM normal, pois a caixa pode esvaziar em segundos.
+      if (state.consecutiveDownCount >= CONFIRM_CRITICAL) {
 
-      // Alarm2 — cria OS emergencial + notifica todos (admin, cliente, técnico via getPhones)
-      if (zone === "alarm2" && previousZone !== "alarm2" && previousZone !== "sci") {
-        const osId = await createEmergencyWorkOrder(cfg, tankName, currentLevel);
-        await fire("alarm2", cfg.alarm2Pct, "down", `Nível crítico — ${cfg.tankType}`, getPhones(), osId);
-        if (!cfg.technicianPhone) {
-          console.warn(`[ALERTA CAIXA] alarm2 disparado mas sensor_id=${sensorId} não tem técnico configurado`);
+        // SCI — reserva de incêndio
+        // Se previousZone === "alarm2", alarm2 já disparou e criou a OS — só notifica.
+        // Se o nível saltou direto de alarm1/normal para sci (pulou alarm2), cria OS aqui.
+        if (zone === "sci" && previousZone !== "sci") {
+          const sciOsId = previousZone !== "alarm2"
+            ? await createEmergencyWorkOrder(cfg, tankName, currentLevel)
+            : null;
+          await fire("sci_reserve", cfg.deadVolumePct, "down", "Consumo da reserva SCI", getPhones(), sciOsId);
+          state.currentZone = "sci";
         }
-        state.lastDropAlertLevel = currentLevel;
-        state.currentZone = "alarm2";
-        state.normalizedNotified = false;
-      }
 
-      // Alerta progressivo dentro de alarm1
-      if (zone === "alarm1" && state.lastDropAlertLevel !== null) {
-        if ((state.lastDropAlertLevel - currentLevel) >= cfg.dropStepPct) {
-          await fire("drop_step", currentLevel, "down", `Nível caindo — ${cfg.tankType}`, getPhones());
+        // Alarm2 — cria OS emergencial + notifica todos
+        if (zone === "alarm2" && previousZone !== "alarm2" && previousZone !== "sci") {
+          const osId = await createEmergencyWorkOrder(cfg, tankName, currentLevel);
+          await fire("alarm2", cfg.alarm2Pct, "down", `Nível crítico — ${cfg.tankType}`, getPhones(), osId);
+          if (!cfg.technicianPhone) {
+            console.warn(`[ALERTA CAIXA] alarm2 disparado mas sensor_id=${sensorId} não tem técnico configurado`);
+          }
           state.lastDropAlertLevel = currentLevel;
+          state.currentZone = "alarm2";
+          state.normalizedNotified = false;
+          // Reseta flag de boia_fault: novo ciclo de alarm2 = nova chance de detectar falha
+          state.boiaFaultNotified = false;
+          // Reseta fillingNotified para que o próximo enchimento notifique novamente
+          state.fillingNotified = false;
         }
       }
 
-      // Alarm1 — notifica admin + cliente + técnico (inclui vinda de boia_high)
-      if (zone === "alarm1" && (previousZone === "normal" || previousZone === "boia_high")) {
-        await fire("alarm1", cfg.alarm1Pct, "down", `Nível de atenção — ${cfg.tankType}`, getPhones());
-        state.lastDropAlertLevel = currentLevel;
-        state.currentZone = "alarm1";
-        state.normalizedNotified = false;
-      }
+      // Alarm1, drop_step e boia_fault usam CONFIRM completo (5 flushes = 2,5 min) —
+      // nível de atenção tolera espera para filtrar ruído do sensor.
+      if (state.consecutiveDownCount >= CONFIRM) {
 
-      // Boia fault — cisterna continua baixando sem recuperação
-      if (
-        cfg.tankType === "inferior" &&
-        zone === "alarm2" &&
-        previousZone === "alarm2" &&
-        state.consecutiveDownCount >= CONFIRM * 2
-      ) {
-        await fire("boia_fault", cfg.alarm2Pct, "down", "Boia inferior com falha", getPhones());
+        // Alerta progressivo dentro de alarm1
+        if (zone === "alarm1" && state.lastDropAlertLevel !== null) {
+          if ((state.lastDropAlertLevel - currentLevel) >= cfg.dropStepPct) {
+            await fire("drop_step", currentLevel, "down", `Nível caindo — ${cfg.tankType}`, getPhones());
+            state.lastDropAlertLevel = currentLevel;
+          }
+        }
+
+        // Alarm1 — notifica todos (inclui vinda de boia_high)
+        if (zone === "alarm1" && (previousZone === "normal" || previousZone === "boia_high")) {
+          await fire("alarm1", cfg.alarm1Pct, "down", `Nível de atenção — ${cfg.tankType}`, getPhones());
+          state.lastDropAlertLevel = currentLevel;
+          state.currentZone = "alarm1";
+          state.normalizedNotified = false;
+        }
+
+        // Boia fault — cisterna continua baixando em alarm2 sem recuperação por 2 min.
+        // boiaFaultNotified impede spam: dispara 1 vez por ciclo de alarm2.
+        if (
+          cfg.tankType === "inferior" &&
+          zone === "alarm2" &&
+          previousZone === "alarm2" &&
+          state.consecutiveDownCount >= CONFIRM_BOIA &&
+          !state.boiaFaultNotified
+        ) {
+          await fire("boia_fault", cfg.alarm2Pct, "down", "Boia inferior com falha", getPhones());
+          state.boiaFaultNotified = true;
+        }
       }
     }
 
     // ── SUBINDO ──────────────────────────────────────────────────────────────
 
-    if (isGoingUp && state.consecutiveUpCount >= CONFIRM) {
+    if (isGoingUp) {
 
-      // Alarm3 boia — nível alto (pane na boia de corte) — só se habilitado
-      if (zone === "boia_high" && previousZone !== "boia_high" && cfg.alarm3BoiaEnabled) {
-        await fire("alarm3_boia", cfg.alarm3BoiaPct, "up", `Nível alto — ${cfg.tankType}`, getAdminPhones());
-        state.currentZone = "boia_high";
+      // Filling e level_restored disparam com CONFIRM_CRITICAL — restauração
+      // do nível é tão urgente quanto o alarme de descida.
+      if (state.consecutiveUpCount >= CONFIRM_CRITICAL) {
+
+        // Filling — começou a subir enquanto estava em zona de alarme.
+        // Exige currentLevel > alarm2Pct para evitar falso positivo quando o nível
+        // oscila dentro da zona crítica (ex: 0% → 4% ainda é alarme, não recuperação).
+        if (previousZone !== "normal" && previousZone !== "boia_high" && !state.fillingNotified && currentLevel > cfg.alarm2Pct) {
+          await fire("filling", cfg.alarm1Pct, "up", "Reservatório enchendo", getPhones());
+          state.fillingNotified = true;
+        }
+
+        // Nível restaurado — nível voltou a ≥85% após estar em alarme
+        const wasLowAlarm = state.currentZone === "alarm1" || state.currentZone === "alarm2" || state.currentZone === "sci";
+        if (currentLevel >= 85 && wasLowAlarm && !state.normalizedNotified) {
+          await fire("level_restored", 85, "up", "Nível normalizado — 85%", getPhones());
+          state.normalizedNotified = true;
+          state.currentZone = "normal";
+          state.lastDropAlertLevel = null;
+          state.fillingNotified = false;
+          state.boiaFaultNotified = false;
+          state.consecutiveDownCount = 0;
+        }
       }
 
-      // Filling — estava em alarme há pelo menos 2,5 min e começou a encher
-      // 2,5 min = CONFIRM (5) × 30s de buffer — confirma que não é leitura espúria
-      if (previousZone !== "normal" && previousZone !== "boia_high" && !state.fillingNotified) {
-        await fire("filling", cfg.alarm1Pct, "up", "Reservatório enchendo", getAdminPhones());
-        state.fillingNotified = true;
-      }
-
-      // Nível restaurado — exige o mesmo CONFIRM que a entrada em alarme:
-      // 5 leituras consecutivas subindo acima de 85% antes de confirmar recuperação.
-      // Sem esse guard, um spike de ruído único a 100% já disparava o aviso.
-      const wasLowAlarm = state.currentZone === "alarm1" || state.currentZone === "alarm2" || state.currentZone === "sci";
-      if (currentLevel >= 85 && wasLowAlarm && !state.normalizedNotified) {
-        await fire("level_restored", 85, "up", "Nível normalizado — 85%", getPhones());
-        state.normalizedNotified = true;
-        state.currentZone = "normal";
-        state.lastDropAlertLevel = null;
-        state.fillingNotified = false;
-        state.consecutiveDownCount = 0;
+      // Alarm3 boia usa CONFIRM completo — pane na boia de corte é detectada
+      // por nível ALTO sustentado, não por um único spike de ruído.
+      // Vai apenas para admin/técnico (cliente não precisa de alerta técnico de boia).
+      if (state.consecutiveUpCount >= CONFIRM) {
+        if (zone === "boia_high" && previousZone !== "boia_high" && cfg.alarm3BoiaEnabled) {
+          await fire("alarm3_boia", cfg.alarm3BoiaPct, "up", `Nível alto — ${cfg.tankType}`, getAdminPhones());
+          state.currentZone = "boia_high";
+        }
       }
     }
   } catch (err: any) {

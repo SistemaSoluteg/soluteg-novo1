@@ -36,6 +36,7 @@ const assignFields = {
   alarm1Pct: z.number().int().min(0).max(100).optional(),
   alarm2Pct: z.number().int().min(0).max(100).optional(),
   alertPhone: z.string().max(30).nullable().optional(),
+  alertPhone2: z.string().max(30).nullable().optional(),
   ...calibrationFields,
   ...sensorTypeFields,
 };
@@ -48,6 +49,7 @@ const updateFields = {
   alarm1Pct: z.number().int().min(0).max(100).optional(),
   alarm2Pct: z.number().int().min(0).max(100).optional(),
   alertPhone: z.string().max(30).nullable().optional(),
+  alertPhone2: z.string().max(30).nullable().optional(),
   ...calibrationFields,
   ...sensorTypeFields,
 };
@@ -91,6 +93,7 @@ export const waterTankAdminRouter = router({
         dropStepPct: input.dropStepPct,
         tankType: input.tankType,
         alertPhone: input.alertPhone ?? null,
+        alertPhone2: input.alertPhone2 ?? null,
         distVazia: input.distVazia ?? null,
         distCheia: input.distCheia ?? null,
       });
@@ -124,6 +127,7 @@ export const waterTankAdminRouter = router({
         dropStepPct: input.dropStepPct,
         tankType: input.tankType,
         alertPhone: input.alertPhone ?? null,
+        alertPhone2: input.alertPhone2 ?? null,
         distVazia: input.distVazia ?? null,
         distCheia: input.distCheia ?? null,
       });

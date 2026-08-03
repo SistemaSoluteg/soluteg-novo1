@@ -93,6 +93,7 @@ export async function listSensorsWithStatus(adminId: number): Promise<Array<{
   dropStepPct: number;
   tankType: string;
   alertPhone: string | null;
+  alertPhone2: string | null;
   distVazia: number | null;
   distCheia: number | null;
   active: number;
@@ -111,7 +112,7 @@ export async function listSensorsWithStatus(adminId: number): Promise<Array<{
       s.tankName, s.capacity, s.notes,
       s.deadVolumePct, s.alarm1Pct, s.alarm2Pct, s.alarm3BoiaPct,
       s.alarm3BoiaEnabled, s.technicianId, s.dropStepPct, s.tankType,
-      s.alertPhone, s.distVazia, s.distCheia,
+      s.alertPhone, s.alertPhone2, s.distVazia, s.distCheia,
       s.active, s.lastSeenAt, s.createdAt,
       t.name AS technicianName, t.phone AS technicianPhone,
       latest.currentLevel, latest.measuredAt AS lastUpdate, latest.status
@@ -151,6 +152,7 @@ export type AssignData = {
   dropStepPct?: number;
   tankType?: "superior" | "inferior";
   alertPhone?: string | null;
+  alertPhone2?: string | null;
   distVazia?: number | null;
   distCheia?: number | null;
 };
@@ -176,6 +178,7 @@ export async function assignSensor(sensorId: number, data: AssignData) {
       dropStepPct: data.dropStepPct ?? 10,
       tankType: data.tankType ?? "superior",
       alertPhone: data.alertPhone ?? null,
+      alertPhone2: data.alertPhone2 ?? null,
       distVazia: data.distVazia ?? null,
       distCheia: data.distCheia ?? null,
       active: 1,
@@ -226,6 +229,7 @@ export async function getSensorById(sensorId: number, adminId: number): Promise<
   dropStepPct: number;
   tankType: string;
   alertPhone: string | null;
+  alertPhone2: string | null;
   active: number;
   createdAt: Date;
   currentLevel: number | null;
@@ -238,7 +242,7 @@ export async function getSensorById(sensorId: number, adminId: number): Promise<
     SELECT s.id, s.deviceId, s.clientId, c.name AS clientName, c.phone AS clientPhone,
            s.tankName, s.capacity, s.notes,
            s.deadVolumePct, s.alarm1Pct, s.alarm2Pct, s.alarm3BoiaPct, s.dropStepPct, s.tankType,
-           s.alertPhone, s.active, s.createdAt,
+           s.alertPhone, s.alertPhone2, s.active, s.createdAt,
            latest.currentLevel, latest.measuredAt AS lastUpdate
     FROM waterTankSensors s
     LEFT JOIN clients c ON c.id = s.clientId

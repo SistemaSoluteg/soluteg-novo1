@@ -2,6 +2,7 @@ import pkg from 'whatsapp-web.js';
 const { Client, LocalAuth, MessageMedia } = pkg as any;
 import qrcode from 'qrcode-terminal';
 import QRCode from 'qrcode';
+import { exec } from 'child_process';
 
 const WHATSAPP_DISABLED = process.env.WHATSAPP_DISABLED === "true";
 if (WHATSAPP_DISABLED) {
@@ -25,7 +26,6 @@ const client = new Client({
 
 let isReady = false;
 let lastQrDataUrl: string | null = null; // Último QR code como imagem (data URL)
-const meuNumero = "551381301010@c.us"; // Formato ID para o litoral (13)
 
 // Evento: Gerar QR Code no Terminal + armazenar como imagem
 client.on('qr', async (qr) => {
@@ -44,14 +44,14 @@ client.on('ready', async () => {
     lastQrDataUrl = null; // QR não é mais necessário após conectar
     console.log('✅ WHATSAPP DA JNC ELÉTRICA e BOMBAS ON!');
 
-    // Aguarda 8s para garantir que o client está estável antes de enviar
+    // Aguarda 8s para garantir que o client está estável antes de enviar.
+    // Usa sendWhatsappAlert em vez de client.sendMessage direto: valida o número
+    // com getNumberId() (tenta ambos os formatos: com e sem o 9) antes de enviar.
     setTimeout(async () => {
         try {
-            console.log('--- Tentando enviar mensagem inicial para:', meuNumero);
-            await client.sendMessage(meuNumero, "🚀 *SISTEMA JNC ONLINE*\nNotificações de OS ativadas.");
-            console.log('🚀 Mensagem de inicialização ENVIADA!');
-        } catch (err) {
-            console.error('❌ Erro no envio inicial:', err.message);
+            await sendWhatsappAlert("🚀 *SISTEMA JNC ONLINE*\nNotificações de OS ativadas.");
+        } catch (err: any) {
+            console.error('❌ Erro no envio inicial:', err?.message);
         }
 
         // Reprocessa alertas de caixa d'água que não foram entregues enquanto o Zap estava offline
@@ -101,9 +101,63 @@ client.on('disconnected', async (reason) => {
     }, 15000);
 });
 
-// Inicia o serviço
+// Inicia o serviço (desabilitado em dev via WHATSAPP_DISABLED=true no .env)
 if (!WHATSAPP_DISABLED) {
-    client.initialize();
+    client.initialize().catch(handleInitError);
+}
+
+// Quando o PM2 reinicia o servidor mas o processo do Chromium sobrevive,
+// o whatsapp-web.js falha ao tentar registrar funções que já existem na página
+// ("already exists") OU com "The browser is already running" quando o destroy()
+// não matou o processo Chrome a tempo. Ambos os casos: destrói e reinicializa.
+async function handleInitError(err: any) {
+  console.error('❌ Erro ao inicializar WhatsApp:', err?.message);
+  const msg: string = err?.message ?? '';
+  const isOldSession = msg.includes('already exists') || msg.includes('The browser is already running');
+  if (isOldSession) {
+    console.log('🔄 Sessão antiga do browser detectada. Destruindo e reinicializando...');
+    try { await client.destroy(); } catch (_) {}
+    // SIGKILL no Chrome caso destroy() não tenha sido suficiente
+    await new Promise<void>((resolve) => {
+      exec('pkill -9 -f chromium 2>/dev/null; pkill -9 -f chrome 2>/dev/null; true', () => resolve());
+    });
+    await new Promise(r => setTimeout(r, 5000));
+    client.initialize().catch((e: any) => {
+      console.error('❌ Falha permanente na inicialização do WhatsApp:', e?.message);
+    });
+  }
+}
+
+// Detecta erros de conexão Puppeteer que ocorrem MID-OPERATION (o evento 'disconnected'
+// não dispara nesses casos). Marca como desconectado e aciona reconexão manual.
+// Frases conhecidas: 'detached Frame', 'Session closed', 'Target closed', 'Protocol error'
+function isConnectionError(err: any): boolean {
+  const msg: string = err?.message ?? '';
+  return (
+    msg.includes('detached Frame') ||
+    msg.includes('Session closed') ||
+    msg.includes('Target closed') ||
+    msg.includes('Protocol error')
+  );
+}
+
+let reconnecting = false; // evita múltiplas reconexões concorrentes
+
+function triggerReconnect() {
+  if (reconnecting) return;
+  reconnecting = true;
+  isReady = false;
+  console.log('🔄 Erro de conexão Puppeteer detectado — reconectando WhatsApp em 15s...');
+  setTimeout(async () => {
+    try { await client.destroy(); } catch (_) {}
+    setTimeout(() => {
+      console.log('🔄 Reinicializando cliente WhatsApp após erro de frame...');
+      reconnecting = false;
+      // Usa handleInitError para tratar "browser already running" caso o
+      // destroy() não tenha matado o Chrome a tempo
+      client.initialize().catch(handleInitError);
+    }, 3000);
+  }, 15000);
 }
 
 /**
@@ -154,16 +208,18 @@ export const sendWhatsappToNumber = async (phone: string, message: string) => {
     const normalized = digits.startsWith('55') ? digits : `55${digits}`;
 
     try {
-        const check = await client.getNumberId(`${normalized}@c.us`);
-        if (check) {
-            const chat = await client.getChatById(check._serialized);
-            await chat.sendMessage(message);
-            console.log(`🚀 Mensagem enviada para ${normalized}`);
-        } else {
-            console.error(`❌ Número ${normalized} não encontrado no WhatsApp.`);
+        const cusId = `${normalized}@c.us`;
+        const check = await client.getNumberId(cusId);
+        if (!check) {
+            throw new Error(`Número ${normalized} não encontrado no WhatsApp`);
         }
+        // getChatById falha com erro críptico "r" quando o contato migrou para @lid.
+        // client.sendMessage resolve o ID internamente sem depender do getChatById.
+        await client.sendMessage(cusId, message);
+        console.log(`🚀 Mensagem enviada para ${normalized}`);
     } catch (err: any) {
-        console.error('❌ ERRO ao enviar para número:', err?.message);
+        if (isConnectionError(err)) triggerReconnect();
+        throw err;
     }
 };
 
@@ -184,17 +240,18 @@ export const sendWhatsappToNumberWithPDF = async (phone: string, message: string
     const normalized = digits.startsWith('55') ? digits : `55${digits}`;
 
     try {
-        const check = await client.getNumberId(`${normalized}@c.us`);
+        const cusId = `${normalized}@c.us`;
+        const check = await client.getNumberId(cusId);
         if (check) {
-            const chat = await client.getChatById(check._serialized);
             const media = new MessageMedia('application/pdf', pdfBuffer.toString('base64'), filename);
-            await chat.sendMessage(media, { caption: message });
+            await client.sendMessage(cusId, media, { caption: message });
             console.log(`🚀 PDF enviado para ${normalized}`);
         } else {
             console.error(`❌ Número ${normalized} não encontrado no WhatsApp.`);
         }
     } catch (err: any) {
         console.error('❌ ERRO ao enviar PDF para número:', err?.message);
+        if (isConnectionError(err)) triggerReconnect();
     }
 };
 
@@ -216,27 +273,28 @@ export const sendWhatsappAlert = async (message: string) => {
     try {
         // Tentamos os dois formatos possíveis do litoral
         const formatos = ["5513981301010@c.us", "551381301010@c.us"];
-        let idFinal = null;
+        let idFinal: string | null = null;
 
         for (const f of formatos) {
             const check = await client.getNumberId(f);
             if (check) {
-                idFinal = check._serialized;
+                // getNumberId pode retornar @lid (novo formato Meta) que quebra getChatById.
+                // Se vier @lid, usa o @c.us que já passou na validação.
+                idFinal = check._serialized.includes('@lid') ? f : check._serialized;
                 break;
             }
         }
 
         if (idFinal) {
             console.log(`✅ ID Localizado: ${idFinal}`);
-            // Usamos o objeto 'chat' para garantir a entrega
-            const chat = await client.getChatById(idFinal);
-            await chat.sendMessage(message);
+            await client.sendMessage(idFinal, message);
             console.log('🚀 SUCESSO: Mensagem enviada para a JNC!');
         } else {
             console.error('❌ ERRO: O WhatsApp não encontrou o número 13-98130-1010 em nenhum formato.');
         }
-    } catch (err) {
-        console.error('❌ ERRO CRÍTICO:', err.message);
+    } catch (err: any) {
+        console.error('❌ ERRO CRÍTICO:', err?.message);
+        if (isConnectionError(err)) triggerReconnect();
     }
 };
 
@@ -255,25 +313,25 @@ export const sendWhatsappAlertWithPDF = async (message: string, pdfBuffer: Buffe
 
     try {
         const formatos = ["5513981301010@c.us", "551381301010@c.us"];
-        let idFinal = null;
+        let idFinal: string | null = null;
 
         for (const f of formatos) {
             const check = await client.getNumberId(f);
             if (check) {
-                idFinal = check._serialized;
+                idFinal = check._serialized.includes('@lid') ? f : check._serialized;
                 break;
             }
         }
 
         if (idFinal) {
-            const chat = await client.getChatById(idFinal);
             const media = new MessageMedia('application/pdf', pdfBuffer.toString('base64'), filename);
-            await chat.sendMessage(media, { caption: message });
+            await client.sendMessage(idFinal, media, { caption: message });
             console.log('🚀 SUCESSO: PDF enviado para a JNC!');
         } else {
             console.error('❌ ERRO: O WhatsApp não encontrou o número 13-98130-1010 em nenhum formato.');
         }
     } catch (err: any) {
         console.error('❌ ERRO CRÍTICO ao enviar PDF para admin:', err?.message);
+        if (isConnectionError(err)) triggerReconnect();
     }
 };

@@ -35,8 +35,6 @@ export default function InspectionTasksTab({ workOrderId }: InspectionTasksTabPr
   const [isAddChecklistOpen, setIsAddChecklistOpen] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
   const [customTitle, setCustomTitle] = useState("");
-  const [brand, setBrand] = useState("");
-  const [power, setPower] = useState("");
   const [editingChecklistId, setEditingChecklistId] = useState<number | null>(null);
   const [deleteChecklistDialogOpen, setDeleteChecklistDialogOpen] = useState<number | null>(null);
   const [savingChecklistId, setSavingChecklistId] = useState<number | null>(null);
@@ -74,8 +72,6 @@ export default function InspectionTasksTab({ workOrderId }: InspectionTasksTabPr
       setIsAddChecklistOpen(false);
       setSelectedTemplateId("");
       setCustomTitle("");
-      setBrand("");
-      setPower("");
     },
     onError: (err: { message: string }) => {
       toast.error(`Erro ao adicionar checklist: ${err.message}`);
@@ -104,6 +100,10 @@ export default function InspectionTasksTab({ workOrderId }: InspectionTasksTabPr
       toast.error(`Erro ao salvar respostas: ${err.message}`);
       setSavingChecklistId(null);
     },
+  });
+
+  const aiSuggestMutation = trpc.checklists.instances.suggestConclusion.useMutation({
+    onError: (e: any) => toast.error("Erro na sugestão de IA: " + e.message),
   });
 
   // Mutation para criar anexo a partir de foto tirada no checklist
@@ -161,8 +161,6 @@ export default function InspectionTasksTab({ workOrderId }: InspectionTasksTabPr
       inspectionTaskId: taskId,
       templateId: parseInt(selectedTemplateId),
       customTitle,
-      brand: brand || undefined,
-      power: power || undefined,
     });
   };
 
@@ -220,8 +218,8 @@ export default function InspectionTasksTab({ workOrderId }: InspectionTasksTabPr
             }
 
             const responses = checklist.responses ? JSON.parse(checklist.responses) : {};
-            // tipo_bomba vem das respostas salvas (campo dentro do template unificado de Bomba)
-            const tipoBomba = responses?.tipo_bomba as string | undefined;
+            // tipo_bomba_1 (novo template) ou tipo_bomba (legado)
+            const tipoBomba = (responses?.tipo_bomba_1 ?? responses?.tipo_bomba) as string | undefined;
             const isSaving = savingChecklistId === checklist.id && updateResponsesMutation.isPending;
             const isEditing = editingChecklistId === checklist.id;
 
@@ -313,6 +311,8 @@ export default function InspectionTasksTab({ workOrderId }: InspectionTasksTabPr
                       isSaving={isSaving}
                       readOnly={!!checklist.isComplete && !isEditing}
                       onAddPhoto={handleAddPhoto}
+                      checklistId={checklist.id}
+                      onAiSuggest={(id) => aiSuggestMutation.mutateAsync({ checklistInstanceId: id })}
                     />
                   )}
                 </CardContent>
@@ -334,8 +334,6 @@ export default function InspectionTasksTab({ workOrderId }: InspectionTasksTabPr
             setIsAddChecklistOpen(false);
             setSelectedTemplateId("");
             setCustomTitle("");
-            setBrand("");
-            setPower("");
           }
         }}
       >
@@ -374,26 +372,6 @@ export default function InspectionTasksTab({ workOrderId }: InspectionTasksTabPr
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label>Marca (opcional)</Label>
-                <Input
-                  placeholder="Ex: WEG"
-                  value={brand}
-                  onChange={(e) => setBrand(e.target.value)}
-                  className="h-11"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Potência (opcional)</Label>
-                <Input
-                  placeholder="Ex: 5 CV"
-                  value={power}
-                  onChange={(e) => setPower(e.target.value)}
-                  className="h-11"
-                />
-              </div>
-            </div>
           </div>
 
           <DialogFooter className="gap-2">

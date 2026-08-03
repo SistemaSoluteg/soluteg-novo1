@@ -42,6 +42,8 @@ import {
   Lock,
   WifiOff,
   UploadCloud,
+  Plus,
+  Trash2,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -54,6 +56,7 @@ import { enqueueMutation } from "@/lib/syncQueue";
 import {
   addPendingMedia,
   getPendingMediaByOrder,
+  getPendingMutations,
   saveOrderDetail,
   type PendingMedia,
 } from "@/lib/offlineDB";
@@ -118,6 +121,10 @@ export default function TechnicianWorkOrderDetail() {
 
   // Checklists
   const [savingChecklistId, setSavingChecklistId] = useState<number | null>(null);
+  const [isAddChecklistOpen, setIsAddChecklistOpen] = useState(false);
+  const [addChecklistTemplateId, setAddChecklistTemplateId] = useState<string>("");
+  const [addChecklistTitle, setAddChecklistTitle] = useState("");
+  const [deleteChecklistId, setDeleteChecklistId] = useState<number | null>(null);
 
   useEffect(() => {
     const id = localStorage.getItem("technicianId");
@@ -229,18 +236,29 @@ export default function TechnicianWorkOrderDetail() {
         refetchAttachments?.(); // Atualiza a lista de fotos do servidor
       }
 
-      // Refetch checklists e só ENTÃO limpa o localStorage — garante que o servidor
-      // já recebeu e confirmou os dados antes de remover o rascunho offline.
-      // Se houve erros na fila, mantém o rascunho para não perder dados não sincronizados.
+      // Refetch checklists e só ENTÃO limpa o localStorage.
+      // Condição de segurança dupla: errors === 0 E nenhuma mutation de checklist
+      // ainda pendente na fila. Sem a segunda verificação, falhas temporárias
+      // (retries < MAX_RETRIES) disparam sync-complete com errors=0 e apagam o
+      // rascunho antes da mutation ter sido confirmada pelo servidor.
       const p = refetchChecklists?.() ?? Promise.resolve();
-      p.then(() => {
+      p.then(async () => {
         if (errors === 0 && workOrderId) {
+          const pending = await getPendingMutations();
+          const checklistStillPending = pending.some(
+            m => m.type === "updateChecklistResponses"
+              && (m.payload as any)?.workOrderId === workOrderId
+          );
+          if (checklistStillPending) {
+            console.log("[OFFLINE] Rascunho de checklist mantido — mutation ainda pendente na fila");
+            return;
+          }
           const prefix = `offline_cl_${workOrderId}_`;
           for (let i = localStorage.length - 1; i >= 0; i--) {
             const key = localStorage.key(i);
             if (key?.startsWith(prefix)) {
               localStorage.removeItem(key);
-              console.log(`[OFFLINE] Rascunho de checklist removido após sync: ${key}`);
+              console.log(`[OFFLINE] Rascunho de checklist removido após sync confirmado: ${key}`);
             }
           }
         }
@@ -260,6 +278,30 @@ export default function TechnicianWorkOrderDetail() {
       toast.error(e.message);
       setSavingChecklistId(null);
     },
+  });
+
+  const aiSuggestChecklistMutation = (trpc as any).technicianPortal.checklists.suggestConclusion.useMutation({
+    onError: (e: any) => toast.error("Erro na sugestão de IA: " + e.message),
+  });
+
+  const addChecklistMutation = (trpc as any).technicianPortal.checklists.addChecklist.useMutation({
+    onSuccess: () => {
+      toast.success("Checklist adicionado!");
+      setIsAddChecklistOpen(false);
+      setAddChecklistTemplateId("");
+      setAddChecklistTitle("");
+      refetchChecklists();
+    },
+    onError: (e: any) => toast.error(e.message || "Erro ao adicionar checklist"),
+  });
+
+  const deleteChecklistMutation = (trpc as any).technicianPortal.checklists.deleteChecklist.useMutation({
+    onSuccess: () => {
+      toast.success("Checklist removido!");
+      setDeleteChecklistId(null);
+      refetchChecklists();
+    },
+    onError: (e: any) => toast.error(e.message || "Erro ao remover checklist"),
   });
 
   const updateStatusMutation = (trpc as any).technicianPortal.updateStatus.useMutation({
@@ -374,8 +416,24 @@ export default function TechnicianWorkOrderDetail() {
     if (!workOrderId) return;
 
     if (!isOnline) {
-      toast.error("Fotos precisam de conexão com a internet. Conecte-se e tente novamente.");
-      throw new Error("offline");
+      try {
+        const blob = await compressImage(file);
+        await addPendingMedia({
+          orderId:   workOrderId,
+          blob,
+          mimeType:  file.type,
+          fileName:  file.name,
+          caption:   caption || undefined,
+          createdAt: Date.now(),
+          uploaded:  false,
+          retries:   0,
+        });
+        toast.info("Foto salva localmente — será enviada ao conectar");
+      } catch {
+        toast.error("Erro ao salvar foto offline.");
+        throw new Error("offline");
+      }
+      return;
     }
 
     setUploading(true);
@@ -809,12 +867,30 @@ export default function TechnicianWorkOrderDetail() {
             )}
 
             {/* ==================== CHECKLISTS ==================== */}
-            {canInteract && checklists.length > 0 && (
+            {canInteract && (
               <div className="bg-white dark:bg-gray-900 rounded-lg border p-4 space-y-3">
-                <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
-                  <ClipboardList className="w-4 h-4" />
-                  Checklists
-                </h2>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
+                    <ClipboardList className="w-4 h-4" />
+                    Checklists
+                  </h2>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setIsAddChecklistOpen(true)}
+                    disabled={!isOnline}
+                    title={!isOnline ? "Sem conexão — conecte-se para adicionar" : undefined}
+                  >
+                    <Plus className="w-4 h-4 mr-1" />
+                    <span className="hidden sm:inline">Adicionar</span>
+                  </Button>
+                </div>
+
+                {checklists.length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-4">
+                    Nenhum checklist adicionado.
+                  </p>
+                )}
 
                 <div className="space-y-4">
                   {checklists.map((checklist: any) => {
@@ -834,24 +910,35 @@ export default function TechnicianWorkOrderDetail() {
                     const localDraftKey = `offline_cl_${workOrderId}_${checklist.id}`;
                     const localDraftRaw = localStorage.getItem(localDraftKey);
                     const responses = localDraftRaw ? JSON.parse(localDraftRaw) : serverResponses;
-                    // tipo_bomba vem das respostas salvas no template unificado de Bomba
-                    const tipoBomba = responses?.tipo_bomba as string | undefined;
+                    // tipo_bomba_1 (novo template) ou tipo_bomba (legado)
+                    const tipoBomba = (responses?.tipo_bomba_1 ?? responses?.tipo_bomba) as string | undefined;
                     const isSaving = savingChecklistId === checklist.id && updateResponsesMutation.isPending;
 
                     return (
                       <div key={checklist.id} className="border rounded-lg p-3 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-sm font-medium">{checklist.customTitle}</p>
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium truncate">{checklist.customTitle}</p>
                             {(tipoBomba || checklist.brand || checklist.power) && (
                               <p className="text-xs text-muted-foreground">
                                 {[tipoBomba, checklist.brand, checklist.power].filter(Boolean).join(" · ")}
                               </p>
                             )}
                           </div>
-                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${checklist.isComplete ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400" : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"}`}>
-                            {checklist.isComplete ? "Completo" : "Incompleto"}
-                          </span>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${checklist.isComplete ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400" : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"}`}>
+                              {checklist.isComplete ? "Completo" : "Incompleto"}
+                            </span>
+                            {!checklist.isComplete && (
+                              <button
+                                onClick={() => setDeleteChecklistId(checklist.id)}
+                                className="text-red-400 hover:text-red-600 p-1 rounded"
+                                title="Remover checklist"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
                         </div>
                         {formStructure && (
                           <ChecklistForm
@@ -882,12 +969,93 @@ export default function TechnicianWorkOrderDetail() {
                             isSaving={isSaving}
                             readOnly={!!checklist.isComplete}
                             onAddPhoto={handleAddPhotoFromChecklist}
+                            checklistId={checklist.id}
+                            onAiSuggest={(id) => aiSuggestChecklistMutation.mutateAsync({ checklistId: id, workOrderId: workOrderId! })}
                           />
                         )}
                       </div>
                     );
                   })}
                 </div>
+
+                {/* Dialog: adicionar checklist */}
+                <Dialog open={isAddChecklistOpen} onOpenChange={setIsAddChecklistOpen}>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Adicionar Checklist</DialogTitle>
+                      <DialogDescription>Selecione o tipo de equipamento e informe a identificação.</DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                      <div className="space-y-1">
+                        <Label>Tipo de equipamento</Label>
+                        <select
+                          className="w-full border rounded-md px-3 py-2 text-sm bg-background"
+                          value={addChecklistTemplateId}
+                          onChange={e => setAddChecklistTemplateId(e.target.value)}
+                        >
+                          <option value="">Selecione...</option>
+                          {checklistTemplates
+                            .filter((t: any) => t.active !== 0)
+                            .map((t: any) => (
+                              <option key={t.id} value={String(t.id)}>{t.name}</option>
+                            ))}
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label>Identificação <span className="text-red-500">*</span></Label>
+                        <Input
+                          placeholder="Ex: Bomba Recalque Bloco A"
+                          value={addChecklistTitle}
+                          onChange={e => setAddChecklistTitle(e.target.value)}
+                          maxLength={255}
+                        />
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setIsAddChecklistOpen(false)}>
+                        Cancelar
+                      </Button>
+                      <Button
+                        onClick={() => {
+                          if (!addChecklistTemplateId || !addChecklistTitle.trim()) return;
+                          addChecklistMutation.mutate({
+                            workOrderId: workOrderId!,
+                            templateId: parseInt(addChecklistTemplateId),
+                            customTitle: addChecklistTitle.trim(),
+                          });
+                        }}
+                        disabled={!addChecklistTemplateId || !addChecklistTitle.trim() || addChecklistMutation.isPending}
+                      >
+                        {addChecklistMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+                        Adicionar
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+
+                {/* Dialog: confirmar remoção de checklist */}
+                <Dialog open={deleteChecklistId !== null} onOpenChange={open => { if (!open) setDeleteChecklistId(null); }}>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Remover checklist?</DialogTitle>
+                      <DialogDescription>Esta ação não pode ser desfeita. O checklist e todas as respostas serão apagados.</DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setDeleteChecklistId(null)}>Cancelar</Button>
+                      <Button
+                        variant="destructive"
+                        onClick={() => {
+                          if (!deleteChecklistId) return;
+                          deleteChecklistMutation.mutate({ checklistId: deleteChecklistId, workOrderId: workOrderId! });
+                        }}
+                        disabled={deleteChecklistMutation.isPending}
+                      >
+                        {deleteChecklistMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+                        Remover
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
               </div>
             )}
 

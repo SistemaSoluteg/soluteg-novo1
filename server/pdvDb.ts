@@ -3,7 +3,7 @@
 // Tabelas: categories, products, sales, saleItems,
 //          cashTransactions, customers
 // ============================================================
-import { eq, desc, and, gte, lte, sql, asc } from "drizzle-orm";
+import { eq, desc, and, gte, lte, lt, sql, asc } from "drizzle-orm";
 import { getDb } from "./db";
 
 async function getPdvDb() {
@@ -257,41 +257,35 @@ export async function getCashBalance() {
 export async function getDashboardStats() {
   const db = await getPdvDb();
 
-  // Buscar TODAS as vendas para filtrar em JS (evita problemas de timezone do MySQL)
-  const allSales = await db.select({
-    id: sales.id,
-    total: sales.total,
-    canceled: sales.canceled,
-    createdAt: sales.createdAt,
-  }).from(sales).orderBy(desc(sales.createdAt));
-
-  // Data de hoje em BRT (UTC-3)
+  // Limites do dia de "hoje" no fuso America/Sao_Paulo. BRT = UTC-3 fixo.
+  // Derivamos a data-calendário subtraindo 3h ANTES de extrair o YYYY-MM-DD —
+  // senão, entre 21:00 e 23:59 BRT, o UTC já estaria no dia seguinte e
+  // "Vendas Hoje" mostraria o dia errado bem na hora do fechamento do caixa.
+  //
+  // As datas são passadas via sql.raw() em formato UTC explícito para evitar
+  // que o mysql2 reconverta o objeto Date usando o timezone do servidor.
   const now = new Date();
   const brtNow = new Date(now.getTime() - 3 * 60 * 60 * 1000);
   const todayStr = brtNow.toISOString().split("T")[0]; // "YYYY-MM-DD" em BRT
 
-  console.log("[PDV Dashboard] Total de vendas no banco:", allSales.length);
-  console.log("[PDV Dashboard] Data hoje (BRT):", todayStr);
-  console.log("[PDV Dashboard] NOW JS:", now.toISOString());
-  if (allSales.length > 0) {
-    console.log("[PDV Dashboard] Últimas 3 vendas:", JSON.stringify(allSales.slice(0, 3)));
-  }
+  const startOfDay = new Date(`${todayStr}T03:00:00.000Z`); // 00:00 BRT = 03:00 UTC
+  const endOfDay   = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000); // 00:00 BRT amanhã
+  // sql.raw() com ISO UTC explícito — evita que o mysql2 reconverta via timezone local
+  const startRaw = sql.raw(`'${startOfDay.toISOString().slice(0, 19).replace("T", " ")}'`);
+  const endRaw   = sql.raw(`'${endOfDay.toISOString().slice(0, 19).replace("T", " ")}'`);
 
-  // Filtrar vendas de hoje (comparando a data em BRT)
-  const todaysSales = allSales.filter((s) => {
-    if (s.canceled) return false; // ignorar canceladas
-    const saleDate = new Date(s.createdAt);
-    const saleBRT = new Date(saleDate.getTime() - 3 * 60 * 60 * 1000);
-    const saleDateStr = saleBRT.toISOString().split("T")[0];
-    return saleDateStr === todayStr;
-  });
-
-  const todayTotal = todaysSales.reduce((sum, s) => sum + Number(s.total || 0), 0);
-  const todayCount = todaysSales.length;
-
-  console.log("[PDV Dashboard] Vendas hoje filtradas:", todayCount, "| Total:", todayTotal);
-
-  const [lowStock, topProducts, balance] = await Promise.all([
+  const [todayAgg, lowStock, topProducts, balance] = await Promise.all([
+    // Total e contagem das vendas de hoje (ignorando canceladas), agregados no SQL.
+    // Usamos sql.raw() para as datas — o mysql2 com timezone local causaria
+    // deslocamento de 3h ao serializar objetos Date como parâmetros.
+    // Usamos "canceled != 1" em vez de "canceled = 0" para capturar também
+    // vendas migradas do TiDB que possam ter canceled = NULL.
+    db.select({
+      total: sql<string | null>`SUM(${sales.total})`,
+      count: sql<number>`COUNT(*)`,
+    }).from(sales).where(
+      sql`${sales.createdAt} >= ${startRaw} AND ${sales.createdAt} < ${endRaw} AND (${sales.canceled} = 0 OR ${sales.canceled} IS NULL)`
+    ),
     getLowStockProducts(),
     db.select({
       productId: saleItems.productId,
@@ -304,6 +298,9 @@ export async function getDashboardStats() {
       .limit(10),
     getCashBalance(),
   ]);
+
+  const todayTotal = Number(todayAgg[0]?.total ?? 0);
+  const todayCount = Number(todayAgg[0]?.count ?? 0);
 
   return {
     todaySales: { total: todayTotal, count: todayCount },

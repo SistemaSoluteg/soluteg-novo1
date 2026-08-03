@@ -2,6 +2,7 @@ import * as db from "../db";
 import { adminLocalProcedure, router } from "../_core/trpc";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
+import { addEquipmentToMonthlyOs } from "../monthlyOsJob";
 import { hashPassword } from "../adminAuth";
 
 export const clientsRouter = router({
@@ -189,4 +190,60 @@ export const clientsRouter = router({
 
       return { total: targets.length, sent, failed, skipped, results };
     }),
+
+  // ── Equipamentos do cliente ──────────────────────────────────
+  equipment: router({
+
+    /** Lista os equipamentos cadastrados para um cliente. */
+    list: adminLocalProcedure
+      .input(z.object({ clientId: z.number() }))
+      .query(async ({ input, ctx }) => {
+        // Garante que o cliente pertence ao admin autenticado
+        const client = await db.getClientById(input.clientId);
+        if (!client || client.adminId !== ctx.adminId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Cliente não encontrado" });
+        }
+        return await db.getClientEquipment(input.clientId);
+      }),
+
+    /**
+     * Adiciona um equipamento ao cliente.
+     * Após salvar, dispara a geração da OS mensal do mês corrente
+     * (pula silenciosamente se a OS já existir).
+     */
+    add: adminLocalProcedure
+      .input(z.object({
+        clientId:    z.number(),
+        type:        z.enum(["bomba", "gerador"]),
+        description: z.string().min(1).max(255),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const client = await db.getClientById(input.clientId);
+        if (!client || client.adminId !== ctx.adminId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Cliente não encontrado" });
+        }
+
+        const id = await db.addClientEquipment({
+          clientId:    input.clientId,
+          type:        input.type,
+          description: input.description,
+        });
+
+        // Busca ou cria a OS do mês e adiciona checklist para este equipamento
+        const osResult = await addEquipmentToMonthlyOs(ctx.adminId, input.clientId, {
+          type:        input.type,
+          description: input.description,
+        });
+
+        return { id, monthlyOs: osResult };
+      }),
+
+    /** Remove um equipamento. */
+    remove: adminLocalProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        await db.removeClientEquipment(input.id);
+        return { success: true };
+      }),
+  }),
 });

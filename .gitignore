@@ -105,7 +105,8 @@ temp/
 *.db
 *.sqlite
 *.sqlite3
-CLLAUDE.md
+# Claude Code (configurações locais que mudam constantemente)
+.claude/
 
-# WhatsApp web.js sessions — nunca commitar
+# Sessão do Chromium gerada pelo whatsapp-web.js (dados do browser interno)
 sessions/

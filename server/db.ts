@@ -1,6 +1,7 @@
 import { eq, desc, sql, like, and, gte, lte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users, reports, InsertReport, invites, InsertInvite, Invite, admins, InsertAdmin, Admin, inspectionReports, InsertInspectionReport, InspectionReport, clients, InsertClient, Client, clientDocuments, InsertClientDocument, ClientDocument, workOrders, InsertWorkOrder, WorkOrder } from "../drizzle/schema";
+import { createPool } from "mysql2/promise";
+import { InsertUser, users, reports, InsertReport, invites, InsertInvite, Invite, admins, InsertAdmin, Admin, inspectionReports, InsertInspectionReport, InspectionReport, clients, InsertClient, Client, clientDocuments, InsertClientDocument, ClientDocument, workOrders, InsertWorkOrder, WorkOrder, clientEquipment, ClientEquipment, InsertClientEquipment } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import crypto from "crypto";
 
@@ -15,7 +16,17 @@ export async function getDb() {
       return null;
     }
     try {
-      _db = drizzle(url);
+      // Cria o pool com timezone UTC explícito no driver (como o mysql2 lê os timestamps)
+      // E força SET time_zone = '+00:00' em cada nova conexão (como o MySQL retorna os timestamps).
+      // Isso garante UTC ponta-a-ponta independente da timezone do servidor MySQL ou do VPS:
+      // - Se MySQL estiver em America/Sao_Paulo, ele passaria a retornar timestamps em UTC
+      // - Se VPS estiver em America/Sao_Paulo, o driver passaria a interpretar como UTC
+      // Sem isso, o mysql2 usa 'local' e qualquer divergência de timezone causa 3h de deslocamento.
+      const pool = createPool({ uri: url, timezone: 'Z' });
+      pool.on('connection', (connection) => {
+        connection.query("SET time_zone = '+00:00'");
+      });
+      _db = drizzle(pool) as unknown as ReturnType<typeof drizzle>;
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
@@ -522,9 +533,56 @@ export async function getDocumentsByClientId(clientId: number): Promise<ClientDo
 export async function getDocumentById(id: number): Promise<ClientDocument | undefined> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
+
   const result = await db.select().from(clientDocuments).where(eq(clientDocuments.id, id)).limit(1);
   return result.length > 0 ? result[0] : undefined;
+}
+
+// ============ EQUIPAMENTOS DO CLIENTE ============
+
+/** Retorna todos os equipamentos de um cliente. */
+export async function getClientEquipment(clientId: number): Promise<ClientEquipment[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return await db
+    .select()
+    .from(clientEquipment)
+    .where(eq(clientEquipment.clientId, clientId))
+    .orderBy(clientEquipment.createdAt);
+}
+
+/** Adiciona um equipamento ao cliente e retorna o ID gerado. */
+export async function addClientEquipment(data: Omit<InsertClientEquipment, "id" | "createdAt">): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(clientEquipment).values(data);
+  return result[0].insertId;
+}
+
+/** Remove um equipamento pelo ID. */
+export async function removeClientEquipment(id: number): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(clientEquipment).where(eq(clientEquipment.id, id));
+}
+
+/**
+ * Retorna todos os clientes que possuem pelo menos um equipamento cadastrado,
+ * junto com o adminId — usado pelo job mensal para saber em qual admin criar a OS.
+ */
+export async function getAllClientsWithEquipment(): Promise<Array<{ id: number; adminId: number; name: string }>> {
+  const db = await getDb();
+  if (!db) return [];
+  // DISTINCT para não duplicar quando o cliente tem mais de 1 equipamento
+  const rows = await db
+    .selectDistinct({
+      id:      clients.id,
+      adminId: clients.adminId,
+      name:    clients.name,
+    })
+    .from(clients)
+    .innerJoin(clientEquipment, eq(clientEquipment.clientId, clients.id));
+  return rows;
 }
 
 export async function deleteClientDocument(id: number) {

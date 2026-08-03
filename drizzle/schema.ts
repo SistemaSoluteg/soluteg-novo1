@@ -190,6 +190,22 @@ export type Client = typeof clients.$inferSelect;
 export type InsertClient = typeof clients.$inferInsert;
 
 /**
+ * Equipamentos cadastrados por cliente.
+ * Cada linha representa um equipamento físico (bomba ou gerador) do condomínio/empresa.
+ * Usado para gerar automaticamente os checklists da OS mensal.
+ */
+export const clientEquipment = mysqlTable("client_equipment", {
+  id:          int("id").autoincrement().primaryKey(),
+  clientId:    int("clientId").notNull(),              // FK → clients.id
+  type:        mysqlEnum("type", ["bomba", "gerador"]).notNull(), // tipo do equipamento
+  description: varchar("description", { length: 255 }).notNull(), // ex: "Torre 1 - Bloco A"
+  createdAt:   timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ClientEquipment = typeof clientEquipment.$inferSelect;
+export type InsertClientEquipment = typeof clientEquipment.$inferInsert;
+
+/**
  * Técnicos do sistema - cada técnico tem login/senha próprio para o portal
  */
 export const technicians = mysqlTable("technicians", {
@@ -549,6 +565,7 @@ export const waterTankSensors = mysqlTable("waterTankSensors", {
   alarm1Pct: int("alarm1Pct").default(30).notNull(),
   alarm2Pct: int("alarm2Pct").default(15).notNull(),
   alertPhone: varchar("alertPhone", { length: 30 }),
+  alertPhone2: varchar("alertPhone2", { length: 30 }),
   // Calibração: distâncias medidas fisicamente (cm)
   distVazia: int("distVazia"),   // distância sensor→água com caixa VAZIA
   distCheia: int("distCheia"),   // distância sensor→água com caixa CHEIA

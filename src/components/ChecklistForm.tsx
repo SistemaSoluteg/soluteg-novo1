@@ -18,7 +18,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Camera, Check, X, Minus, Save, Loader2 } from "lucide-react";
+import { Camera, Check, X, Minus, Save, Loader2, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface ConditionalRule {
@@ -62,14 +62,19 @@ interface ChecklistFormProps {
   onSave: (responses: Record<string, unknown>, isComplete: boolean) => void;
   isSaving?: boolean;
   readOnly?: boolean;
+  /** ID da instância de checklist — necessário para a sugestão de IA. */
+  checklistId?: number;
   /**
    * Chamado quando o usuário captura uma foto em um item do checklist.
    * O pai faz o upload e cria o anexo na OS — o ChecklistForm só coleta
    * o arquivo e a legenda.
-   * caption = texto da legenda (pode ser editado pelo usuário)
-   * file    = arquivo de imagem selecionado
    */
   onAddPhoto?: (caption: string, file: File) => Promise<void>;
+  /**
+   * Chamado ao clicar em "Sugerir com IA" na seção Observações.
+   * O pai faz a chamada tRPC e retorna a sugestão gerada pelo Claude.
+   */
+  onAiSuggest?: (checklistId: number) => Promise<{ conclusao: string; recomendacoes: string }>;
 }
 
 // ✅ FIX: Clicar no botão já selecionado agora DESSEleciona (toggle)
@@ -208,9 +213,37 @@ export default function ChecklistForm({
   onSave,
   isSaving = false,
   readOnly = false,
+  checklistId,
   onAddPhoto,
+  onAiSuggest,
 }: ChecklistFormProps) {
   const [responses, setResponses] = useState<Record<string, unknown>>(initialResponses);
+
+  // ── Estado da sugestão de IA ────────────────────────────────────────────────
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiSuggestion, setAiSuggestion] = useState<{ conclusao: string; recomendacoes: string } | null>(null);
+
+  async function handleAiSuggest() {
+    if (!checklistId || !onAiSuggest) return;
+    setAiLoading(true);
+    try {
+      const result = await onAiSuggest(checklistId);
+      setAiSuggestion(result);
+    } catch {
+      // erro tratado no pai via toast
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
+  function applyAiSuggestion() {
+    if (!aiSuggestion) return;
+    const texto = aiSuggestion.recomendacoes
+      ? `${aiSuggestion.conclusao}\n\nRecomendações:\n${aiSuggestion.recomendacoes}`
+      : aiSuggestion.conclusao;
+    setResponses(prev => ({ ...prev, observacoes: texto }));
+    setAiSuggestion(null);
+  }
 
   // ── Estado do dialog de foto por item ──────────────────────────────────────
   // Armazena qual item está com a câmera aberta, o arquivo selecionado e a legenda.
@@ -368,7 +401,19 @@ export default function ChecklistForm({
       case "select":
         return (
           <div key={field.id} className="space-y-1.5">
-            <Label className="text-sm">{field.label}</Label>
+            <div className="flex items-center justify-between">
+              <Label className="text-sm">{field.label}</Label>
+              {!readOnly && onAddPhoto && field.id.startsWith("tipo_bomba_") && (
+                <button
+                  type="button"
+                  onClick={() => handleCameraClick(field.id, field.label)}
+                  title={`Adicionar foto — ${field.label}`}
+                  className="text-muted-foreground hover:text-blue-600 transition-colors p-1 rounded"
+                >
+                  <Camera className="h-4 w-4" />
+                </button>
+              )}
+            </div>
             <Select
               value={(value as string) || ""}
               onValueChange={(val) => handleChange(field.id, val)}
@@ -462,7 +507,36 @@ export default function ChecklistForm({
       {parsedFormStructure.sections.map((section) => (
         <Card key={section.id}>
           <CardHeader className="py-3 px-4 bg-muted/30">
-            <CardTitle className="text-sm font-medium">{section.title}</CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-medium">{section.title}</CardTitle>
+              <div className="flex items-center gap-1">
+                {/* Botão IA — apenas na seção Observações */}
+                {!readOnly && onAiSuggest && checklistId && section.id === "observacoes" && (
+                  <button
+                    type="button"
+                    onClick={handleAiSuggest}
+                    disabled={aiLoading}
+                    title="Sugerir conclusão com IA"
+                    className="text-muted-foreground hover:text-purple-600 transition-colors p-1 rounded disabled:opacity-50"
+                  >
+                    {aiLoading
+                      ? <Loader2 className="h-4 w-4 animate-spin" />
+                      : <Sparkles className="h-4 w-4" />}
+                  </button>
+                )}
+                {/* Botão câmera — todas as seções */}
+                {!readOnly && onAddPhoto && (
+                  <button
+                    type="button"
+                    onClick={() => handleCameraClick(section.id, section.title)}
+                    title={`Adicionar foto — ${section.title}`}
+                    className="text-muted-foreground hover:text-blue-600 transition-colors p-1 rounded"
+                  >
+                    <Camera className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            </div>
           </CardHeader>
           <CardContent className="p-4 space-y-3">
             {/* ✅ Items Ok/NOk/NA — renderizados UMA VEZ apenas aqui */}
@@ -553,6 +627,38 @@ export default function ChecklistForm({
           </Button>
         </div>
       )}
+
+      {/* Dialog de sugestão de IA */}
+      <Dialog open={!!aiSuggestion} onOpenChange={(open) => { if (!open) setAiSuggestion(null); }}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-purple-600" />
+              Conclusão sugerida pela IA
+            </DialogTitle>
+          </DialogHeader>
+          {aiSuggestion && (
+            <div className="space-y-3 text-sm">
+              <div>
+                <p className="font-medium text-xs text-muted-foreground uppercase tracking-wide mb-1">Análise</p>
+                <p className="whitespace-pre-wrap text-foreground">{aiSuggestion.conclusao}</p>
+              </div>
+              {aiSuggestion.recomendacoes && (
+                <div>
+                  <p className="font-medium text-xs text-muted-foreground uppercase tracking-wide mb-1">Recomendações</p>
+                  <p className="whitespace-pre-wrap text-foreground">{aiSuggestion.recomendacoes}</p>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setAiSuggestion(null)}>Descartar</Button>
+            <Button className="bg-purple-600 hover:bg-purple-700 text-white" onClick={applyAiSuggestion}>
+              Usar esta conclusão
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Input de arquivo oculto — acionado pelo botão de câmera de cada item */}
       <input

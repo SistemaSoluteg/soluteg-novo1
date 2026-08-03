@@ -806,16 +806,33 @@ async function startServer() {
 
   // ============================================================
   // ▶️ INICIA O SERVIDOR
-  // Porta 3000 | Aceita conexões de qualquer IP (0.0.0.0)
+  // Porta lida do ambiente (.env). Em produção sem PORT no .env,
+  // cai no padrão 3000. Em staging, PORT=3001 no .env é respeitado.
   // ============================================================
   const PORT = Number(process.env.PORT) || 3000;
-  server.listen(PORT, "0.0.0.0", () => {
+  server.listen(PORT, "0.0.0.0", async () => {
     console.log("=========================================");
     console.log(`🚀 SERVIDOR SOLUTEG RODANDO`);
     console.log(`- Acesse: http://jnc.soluteg.com.br p/ landing JNC`);
     console.log(`- Acesse: http://app.soluteg.com.br p/ login Admin, Técnico e Clientes`);
     console.log("=========================================");
     initMqtt(); // Inicia o subscriber MQTT (desabilita sozinho se MQTT_BROKER_URL não estiver no .env)
+
+    // ── OS mensais automáticas ────────────────────────────────────────
+    // Roda no startup para recuperar meses não processados (ex: servidor estava offline no dia 1)
+    const { processAllClientsMonthlyOs } = await import("./monthlyOsJob");
+    processAllClientsMonthlyOs().catch((e) =>
+      console.error("[MONTHLY OS] Erro no startup:", e)
+    );
+
+    // Cron: todo dia 1 do mês às 01h00 — cria OS mensais para todos os clientes com equipamentos
+    // Expressão cron: "minuto hora dia mês dia-semana"
+    const cron = await import("node-cron");
+    cron.default.schedule("0 1 1 * *", () => {
+      processAllClientsMonthlyOs().catch((e) =>
+        console.error("[MONTHLY OS] Erro no cron:", e)
+      );
+    });
   });
 }
 

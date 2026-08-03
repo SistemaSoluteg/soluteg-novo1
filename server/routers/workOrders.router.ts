@@ -521,6 +521,14 @@ export const workOrdersRouter = router({
         await auxDb.deleteComment(input.id);
         return { success: true, message: "Comentário deletado com sucesso" };
       }),
+
+    // Sugestão de comentário para o cliente via IA (analisa OS + comentários internos + checklists)
+    suggestForClient: adminLocalProcedure
+      .input(z.object({ workOrderId: z.number() }))
+      .mutation(async ({ input }) => {
+        const { sugerirComentarioCliente } = await import("../iaWorkOrders");
+        return await sugerirComentarioCliente(input.workOrderId);
+      }),
   }),
 
   // ==================== RECURRENCE ====================

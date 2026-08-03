@@ -61,9 +61,13 @@ export const adminAuthRouter = router({
         // Obtém as configurações do cookie (segurança, domínio, etc.) com base na requisição
         const cookieOptions = getSessionCookieOptions(ctx.req);
 
-        // Define o cookie "admin_token" na resposta HTTP para o navegador salvar
-        // Esse cookie será enviado automaticamente em todas as próximas requisições
-        ctx.res.setHeader('Set-Cookie', `admin_token=${result.token}; ${Object.entries(cookieOptions).map(([k, v]) => `${k}=${v}`).join('; ')}`);
+        // Define o cookie "admin_token" com maxAge explícito (7 dias em ms).
+        // Sem maxAge o cookie seria do tipo "session" e seria apagado pelo browser
+        // em hibernação, crash de aba ou GC agressivo — causando logout espontâneo no PDV.
+        ctx.res.cookie('admin_token', result.token, {
+          ...cookieOptions,
+          maxAge: 7 * 24 * 60 * 60 * 1000,
+        });
 
         return result;
       } catch (error) {

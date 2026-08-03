@@ -36,6 +36,8 @@ export const documentsRouter = router({
       fileKey: z.string(),
       fileSize: z.number().optional(),
       mimeType: z.string().optional(),
+      month: z.number().min(1).max(12).optional(),
+      year: z.number().optional(),
     }))
     .mutation(async ({ input, ctx }) => {
       await db.createClientDocument({ ...input, adminId: ctx.adminId });
