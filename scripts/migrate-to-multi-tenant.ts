@@ -16,8 +16,8 @@ import { config } from 'dotenv';
 config();
 
 import { assertStagingEnvironment, maskEmail } from '../server/lib/environment';
-import { drizzle } from 'drizzle-orm/mysql2';
 import { sql, eq } from 'drizzle-orm';
+import { getDb } from '../server/db';
 import {
   tenants,
   platformAdmins,
@@ -162,7 +162,8 @@ async function tabelaExiste(db: AnyDb, tabela: string): Promise<boolean> {
   const rows = await db.execute(sql.raw(
     `SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '${tabela}'`
   ));
-  return (rows as unknown[]).length > 0;
+  // db.execute() retorna [linhas, metadata] — as linhas reais estão em rows[0]
+  return (rows[0] as unknown[]).length > 0;
 }
 
 async function colunaExiste(db: AnyDb, tabela: string, coluna: string): Promise<boolean> {
@@ -170,19 +171,22 @@ async function colunaExiste(db: AnyDb, tabela: string, coluna: string): Promise<
     `SELECT 1 FROM information_schema.COLUMNS ` +
     `WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '${tabela}' AND COLUMN_NAME = '${coluna}'`
   ));
-  return (rows as unknown[]).length > 0;
+  // db.execute() retorna [linhas, metadata] — as linhas reais estão em rows[0]
+  return (rows[0] as unknown[]).length > 0;
 }
 
 async function contar(db: AnyDb, tabela: string): Promise<number> {
   const rows = await db.execute(sql.raw(`SELECT COUNT(*) AS n FROM \`${tabela}\``));
-  return Number((rows as Array<{ n: unknown }>)[0]?.n ?? 0);
+  // db.execute() retorna [linhas, metadata] — a primeira linha real está em rows[0][0]
+  return Number((rows[0] as Array<{ n: unknown }>)[0]?.n ?? 0);
 }
 
 async function contarNulos(db: AnyDb, tabela: string): Promise<number> {
   const rows = await db.execute(sql.raw(
     `SELECT COUNT(*) AS n FROM \`${tabela}\` WHERE tenantId IS NULL`
   ));
-  return Number((rows as Array<{ n: unknown }>)[0]?.n ?? 0);
+  // db.execute() retorna [linhas, metadata] — a primeira linha real está em rows[0][0]
+  return Number((rows[0] as Array<{ n: unknown }>)[0]?.n ?? 0);
 }
 
 async function registrarLog(
@@ -207,13 +211,11 @@ async function main() {
   // Aborta se não for staging (lê DB_NAME do .env)
   assertStagingEnvironment();
 
-  const dbUrl = process.env.DATABASE_URL;
-  if (!dbUrl) {
-    fail('DATABASE_URL não definido no .env');
+  const db = await getDb();
+  if (!db) {
+    fail('DATABASE_URL não definido ou banco inacessível');
     process.exit(1);
   }
-
-  const db = drizzle(dbUrl);
   ok(`Conectado ao banco (${process.env.DB_NAME})`);
 
   // Verifica tabelas de auditoria (Sub-fase 3.7.1a)
