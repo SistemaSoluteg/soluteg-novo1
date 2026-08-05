@@ -4,7 +4,7 @@
 > Contém o **contexto operacional vivo** — o que está sendo feito agora, regras invioláveis, comandos comuns.
 > Para visão arquitetural completa, ver [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDOFF.md).
 
-**Última atualização:** 18/05/2026 (após Sub-fase 3.7.1c)
+**Última atualização:** 05/08/2026 (após Sub-fases 3.7.1d e 3.7.1e)
 
 ---
 
@@ -22,7 +22,7 @@
 
 ---
 
-## 2. Estado atual (18/05/2026)
+## 2. Estado atual (05/08/2026)
 
 ### Em andamento
 **Fase 3.7 — Refactor multi-tenant.** Branch `multi-tenant`.
@@ -33,14 +33,16 @@
 - ✅ Bugfix de aprovação de orçamento em produção (commit `51a18a7`) — `getBudgetByToken` sem `adminId`/`priority` no SELECT
 - ✅ Consolidação completa da documentação do projeto
 - ✅ Sub-fase 3.7.1c — 38 tabelas operacionais receberam `tenantId INT NULL`. Total: 41 tabelas com `tenantId` no banco. Dados existentes intactos (29 clients, 76 workOrders, 270 products).
+- ✅ Sub-fase 3.7.1d — Script `scripts/migrate-to-multi-tenant.ts` finalizado e validado em dry-run. Bug de leitura do mysql2 corrigido (`db.execute()` retorna `[linhas, metadata]`, não `[linhas]`).
+- ✅ Sub-fase 3.7.1e — Migração aplicada em staging (`--apply`): tenant JNC (id=1) e Soluteg Direto (id=2) criados, platformAdmin Thiago (id=1) criado, `tenantId=1` em 109.230 linhas de 38 tabelas. ALTERs `condominiums.type` e `clients.gestorId` aplicados. Zero NULLs, integridade referencial validada.
 
 ### Próxima
-**Sub-fase 3.7.1d — Script de migração de dados em dry-run.**
+**Sub-fase 3.7.1f — `tenantId` NOT NULL + FKs + índices + rotação do JWT_SECRET.**
 
-Script Node.js (`scripts/migrate-to-multi-tenant.ts`) que lê os dados existentes, calcula as operações (criar tenant JNC, condominiums, gestors, popular `tenantId`) e exibe preview completo sem escrever nada. Modo `--apply` para execução real.
+Após confirmar zero NULLs em staging (já validado na 3.7.1e), tornar `tenantId` NOT NULL nas 38 tabelas operacionais, adicionar FKs `tenantId → tenants.id`, criar índices, e rotacionar o `JWT_SECRET` para invalidar sessões antigas.
 
 ### Roadmap restante (resumo)
-Sub-fases 3.7.1c → 3.7.1d (script migração dry-run) → 3.7.1e (migração real) → 3.7.1f (NOT NULL + rotação JWT) → 3.7.2 (isolamento queries via helper `forTenant` — **mais crítica**) → 3.7.3 a 3.7.8.
+3.7.1f (NOT NULL + rotação JWT) → 3.7.2 (isolamento queries via helper `forTenant` — **mais crítica de segurança**) → 3.7.3 a 3.7.8.
 
 Detalhamento completo em [`ROADMAP.md`](./ROADMAP.md).
 

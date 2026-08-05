@@ -1,7 +1,7 @@
 # Soluteg — Documento Técnico de Arquitetura e Handoff
 
 > **Versão:** 1.0
-> **Data:** 18 de maio de 2026
+> **Data:** 05 de agosto de 2026
 > **Autor:** Thiago (com assessoria de Claude AI)
 > **Audiência:** Arquiteto de software, desenvolvedores seniores, contributors técnicos
 > **Status do projeto:** Em produção (JNC) | Refactor multi-tenant em andamento
@@ -507,9 +507,9 @@ Cloudinary plano grátis suporta até ~20 condomínios sem custo. Pago US$89/mê
 | 3.7.1a | Tabelas de segurança (auditLog, loginAttempts, migrationAuditLog) + helper de ambiente | ✅ CONCLUÍDA |
 | 3.7.1b | Tabelas centrais (tenants, platformAdmins, gestors, condominiums, notificationContacts) | ✅ CONCLUÍDA |
 | 3.7.1c | Adicionar coluna `tenantId` nas tabelas existentes (nullable) | ✅ CONCLUÍDA |
-| 3.7.1d | Script de migração de dados (dry-run primeiro) | ⏳ PRÓXIMA |
-| 3.7.1e | Executar migração real + criar conta platformAdmin | ⏳ PENDENTE |
-| 3.7.1f | Tornar `tenantId` NOT NULL + rotacionar JWT_SECRET | ⏳ PENDENTE |
+| 3.7.1d | Script de migração de dados (dry-run primeiro) | ✅ CONCLUÍDA |
+| 3.7.1e | Executar migração real + criar conta platformAdmin | ✅ CONCLUÍDA |
+| 3.7.1f | Tornar `tenantId` NOT NULL + rotacionar JWT_SECRET | ⏳ PRÓXIMA |
 | 3.7.2 | Isolamento de queries por tenant (helper centralizado + audit) | ⏳ PENDENTE |
 | 3.7.3 | Procedures tRPC tipadas (platformAdmin/tenantAdmin/gestor/technician) | ⏳ PENDENTE |
 | 3.7.4 | UI: portal platformAdmin (CRUD de tenants e admins) | ⏳ PENDENTE |
@@ -635,6 +635,46 @@ Coluna `tenantId` presente em todas as 38 tabelas, valor `NULL` para todos os re
 
 **Pendências para produção:** ver `PENDENCIAS_DEPLOY_PRODUCAO.md` seção "3.7.1c".
 
+### 8.5 Sub-fase 3.7.1d — Script de migração de dados (05/08/2026)
+
+**Objetivo:** escrever e validar o script de migração em dry-run antes de qualquer alteração no banco.
+
+**Entregue:**
+- Script `scripts/migrate-to-multi-tenant.ts` com 6 etapas:
+  - **Etapa 0:** pré-validações (ambiente staging, tabelas de auditoria e multi-tenant, 38 colunas `tenantId`, contagens mínimas)
+  - **Etapa 1:** ALTERs estruturais (`condominiums.type`, `clients.gestorId`) — DDL fora da transação (causa commit implícito no MySQL)
+  - **Etapa 2:** criar tenants (JNC + Soluteg Direto) — idempotente (pula se já existe por `slug`)
+  - **Etapa 3:** popular `tenantId=1` nas 38 tabelas via `UPDATE WHERE tenantId IS NULL`
+  - **Etapa 4:** criar conta `platformAdmin` — idempotente (pula se já existe por email)
+  - **Etapa 5:** validações finais (NULLs residuais, integridade referencial, contagens mínimas)
+- Modos: sem flag = dry-run (zero escrita); `--apply` = execução real com transação MySQL
+
+**Bug corrigido durante o desenvolvimento:**
+`db.execute()` do mysql2 retorna `[linhas, metadata]` — formato aninhado. As helpers do script liam `rows[0]` (array de linhas) em vez de `rows[0][0]` (primeira linha), fazendo todas as contagens retornarem 0 e `colunaExiste()` sempre retornar `true` (pulava os ALTERs da Etapa 1 incorretamente). Corrigido nas quatro funções: `contar()`, `contarNulos()`, `tabelaExiste()`, `colunaExiste()`.
+
+O script também passou a usar `getDb()` de `server/db.ts` (pool com `timezone: 'Z'`) em vez de `drizzle(url)` direto, alinhando com o padrão do projeto.
+
+**Migration:** nenhuma — script de dados, não DDL.
+
+### 8.6 Sub-fase 3.7.1e — Migração real em staging (05/08/2026)
+
+**Objetivo:** executar `--apply` no banco staging e validar o resultado.
+
+**Entregue:**
+- Backup pré-migração: `/var/backups/soluteg-staging/backup-pre-3.7.1e-*.sql`
+- Script executado com `--apply` sem erros; transação com COMMIT automático ao final
+- **Tenants criados:**
+  - `jnc` (id=1): JNC Comércio e Serviços, Praia Grande/SP, `isPlatformTenant=0`
+  - `soluteg-direto` (id=2): `isPlatformTenant=1`
+- **PlatformAdmin criado:** Thiago Lopes (id=1, `mustResetPassword=0`)
+- **ALTERs estruturais:** `condominiums.type varchar(40) NOT NULL DEFAULT 'condominio'` e `clients.gestorId int NULL` adicionados
+- **Dados populados:** `tenantId=1` em 109.230 linhas distribuídas nas 38 tabelas operacionais (29 clients, 75 workOrders, 270 products, 19 budgets, 187 sales, 107.290 waterTankMonitoring, entre outros)
+- **Validações pós-migração:** zero NULLs residuais; todos os `tenantId` apontam para tenant existente
+- Backup pós-migração: `/var/backups/soluteg-staging/backup-pos-3.7.1e-*.sql`
+- Cada passo registrado em `migrationAuditLog` com `migrationName='3.7.1e-populate-tenants'`
+
+**Migration:** nenhuma DDL nova — dados populados via script.
+
 ---
 
 ## 9. O que vem pela frente
@@ -651,7 +691,7 @@ Coluna `tenantId` presente em todas as 38 tabelas, valor `NULL` para todos os re
 
 **Estimativa:** 30 min execução, 15 min validação.
 
-### 9.2 Sub-fase 3.7.1d — Script de migração de dados (DRY-RUN)
+### 9.2 Sub-fase 3.7.1d — Script de migração de dados *(✅ Concluída — ver seção 8.5)*
 
 **Escopo:** escrever script Node.js (`scripts/migrate-to-multi-tenant.ts`) que:
 
@@ -672,7 +712,7 @@ Coluna `tenantId` presente em todas as 38 tabelas, valor `NULL` para todos os re
 
 **Estimativa:** 4-6h de desenvolvimento + 2h de testes.
 
-### 9.3 Sub-fase 3.7.1e — Executar migração real em staging
+### 9.3 Sub-fase 3.7.1e — Executar migração real em staging *(✅ Concluída — ver seção 8.6)*
 
 **Escopo:**
 - Backup obrigatório
@@ -682,7 +722,7 @@ Coluna `tenantId` presente em todas as 38 tabelas, valor `NULL` para todos os re
 
 **Estimativa:** 30 min execução, 1-2h validação.
 
-### 9.4 Sub-fase 3.7.1f — NOT NULL e JWT_SECRET
+### 9.4 Sub-fase 3.7.1f — NOT NULL e JWT_SECRET *(⏳ PRÓXIMA)*
 
 **Escopo:**
 - ALTER `tenantId` para NOT NULL em todas as tabelas (depois de garantir 0 nulls)
@@ -1053,8 +1093,8 @@ SMTP_PASS=...
 
 ## Encerramento
 
-Este documento reflete o estado em **18 de maio de 2026**. À medida que o multi-tenant avança e novas decisões são tomadas, este documento **deve ser atualizado** — preferencialmente na mesma branch onde a mudança acontece.
+Este documento reflete o estado em **05 de agosto de 2026**. À medida que o multi-tenant avança e novas decisões são tomadas, este documento **deve ser atualizado** — preferencialmente na mesma branch onde a mudança acontece.
 
 Para qualquer dúvida ou sugestão, ver o `ROADMAP.md` para contexto de prioridades, ou abrir issue no GitHub.
 
-**Próximo marco:** Sub-fase 3.7.1d — script de migração de dados em modo dry-run. O script lerá os dados existentes, calculará as operações necessárias e exibirá um preview completo sem escrever nada no banco.
+**Próximo marco:** Sub-fase 3.7.1f — tornar `tenantId` NOT NULL nas 38 tabelas operacionais, adicionar FKs `tenantId → tenants.id`, criar índices em `tenantId`, e rotacionar o `JWT_SECRET` para invalidar sessões anteriores à migração.
