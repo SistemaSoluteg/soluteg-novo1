@@ -523,7 +523,7 @@ async function main() {
       const rows = await (db as AnyDb).execute(sql.raw(
         `SELECT COUNT(*) AS n FROM \`${t}\` WHERE tenantId NOT IN (SELECT id FROM tenants)`
       ));
-      const n = Number((rows as Array<{ n: unknown }>)[0]?.n ?? 0);
+      const n = Number((rows[0] as Array<{ n: unknown }>)[0]?.n ?? 0);
       if (n > 0) { fail(`${t}: ${n} linhas com tenantId inválido`); passou = false; }
       else ok(`${t}: tenantId válido`);
     }
