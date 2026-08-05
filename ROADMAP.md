@@ -13,7 +13,7 @@
 ⏭️  Fase 2   — Pulada deliberadamente (hardware definido fora do código)
 ✅ Fase 3   — Portal técnico PWA offline
 🟡 Fase 3.6 — Web Push (infra pronta, ativação adiada para após multi-tenant)
-🟡 Fase 3.7 — Multi-tenant (EM ANDAMENTO — Sub-fase 3.7.1e concluída, próxima: 3.7.1f)
+🟡 Fase 3.7 — Multi-tenant (EM ANDAMENTO — Sub-fase 3.7.1e concluída, próxima: 3.7.2 isolamento de queries)
 ⏳ Fase 4   — Validação comercial
 ⏳ Fase 5   — Landing page comercial soluteg.com.br
 ```
@@ -81,14 +81,22 @@ Visão arquitetural completa em [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDO
 | 3.7.1c | Adicionar `tenantId` nas tabelas existentes (nullable) | ✅ Concluída |
 | 3.7.1d | Script de migração de dados (dry-run) | ✅ Concluída |
 | 3.7.1e | Executar migração real + criar conta platformAdmin | ✅ Concluída |
-| 3.7.1f | `tenantId` NOT NULL + rotacionar JWT_SECRET | ⏳ PRÓXIMA |
-| 3.7.2 | Isolamento de queries (helper `forTenant`) — **mais crítica** | ⏳ Pendente |
+| 3.7.2 | Isolamento de queries (helper `forTenant`) — **mais crítica** | ⏳ PRÓXIMA |
+| 3.7.1f | `tenantId` NOT NULL + FKs + índices + rotacionar JWT_SECRET — **travamento final, só depois de 3.7.2** | ⏳ Pendente (após o isolamento) |
 | 3.7.3 | Procedures tRPC tipadas por papel | ⏳ Pendente |
 | 3.7.4 | UI portal platformAdmin | ⏳ Pendente |
 | 3.7.5 | Branding dinâmico por tenant | ⏳ Pendente |
 | 3.7.6 | Fluxo de primeiro acesso do gestor migrado | ⏳ Pendente |
 | 3.7.7 | Auditoria ativa (registrar ações sensíveis) | ⏳ Pendente |
 | 3.7.8 | Testes E2E de isolamento | ⏳ Pendente |
+
+> **⚠️ Ordem de execução alterada (05/08/2026):** o isolamento de queries (**3.7.2**) passou a vir **ANTES** do NOT NULL (**3.7.1f**) — repare que a tabela acima já reflete essa ordem, mesmo com os identificadores fora de sequência numérica. Motivo: o código da aplicação ainda **não popula `tenantId` nos INSERTs** (a coluna só aparece em `server/pdvSchema.ts`, em nenhum router). Aplicar NOT NULL agora quebraria toda criação de registro em runtime. Primeiro o **3.7.2** faz o código passar a ler e escrever `tenantId` em todo lugar; só **depois** o **3.7.1f** trava com NOT NULL + FKs + índices + rotação do JWT_SECRET.
+
+### Decisão de arquitetura — PDV fora do multi-tenant (05/08/2026)
+
+O **PDV (ponto de venda)** **não** será multi-tenant: fica **exclusivo da loja da JNC**. Os demais tenants terão apenas cadastro de produtos, **sem PDV**.
+
+**Consequência:** as **6 tabelas do PDV** — `products`, `sales`, `saleItems`, `cashTransactions`, `customers`, `categories` — ficam **FORA do escopo de isolamento de queries** (3.7.2).
 
 ### Histórico recente
 
@@ -97,6 +105,7 @@ Visão arquitetural completa em [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDO
 - **15/05/2026** — Sub-fase 3.7.1b concluída em staging. 5 tabelas multi-tenant criadas com `utf8mb4_bin`, 4 FKs e 18 índices. Senha do banco staging rotacionada.
 - **18/05/2026** — Sub-fase 3.7.1c concluída em staging. 38 tabelas operacionais receberam coluna `tenantId INT NULL`. Dados existentes intactos (29 clients, 76 workOrders, 270 products). Bug descoberto: `grep -v "statement-breakpoint"` não funciona quando os marcadores estão inline; solução documentada em `PENDENCIAS_DEPLOY_PRODUCAO.md` (`sed` em vez de `grep -v`).
 - **05/08/2026** — Sub-fases 3.7.1d e 3.7.1e concluídas em staging. Script `scripts/migrate-to-multi-tenant.ts` finalizado e aplicado com `--apply`: 2 tenants criados (`jnc` id=1 e `soluteg-direto` id=2), platformAdmin Thiago Lopes criado (id=1). A Etapa 3 (popular `tenantId`) atualizou 0 linhas porque os dados já haviam sido migrados em execução `--apply` anterior (script idempotente via `WHERE tenantId IS NULL`). Estado final validado: 29 clients, 75 workOrders, 270 products — todos com `tenantId=1`, zero NULLs residuais, integridade referencial OK. ALTERs `condominiums.type` e `clients.gestorId` aplicados. Backups pré/pós em `/var/backups/soluteg-staging/`.
+- **05/08/2026** — Reordenação de sub-fases: **3.7.2 (isolamento de queries) passa a vir antes de 3.7.1f (NOT NULL)**. Motivo: verificado via `grep` que o código ainda **não popula `tenantId` nos INSERTs** (a coluna aparece só em `server/pdvSchema.ts`, em nenhum router) — aplicar NOT NULL agora quebraria a criação de registros em runtime. Decidido também que o **PDV fica fora do multi-tenant** (exclusivo da JNC): as 6 tabelas de PDV (`products`, `sales`, `saleItems`, `cashTransactions`, `customers`, `categories`) saem do escopo de isolamento de queries.
 
 ### Pendência crítica
 
