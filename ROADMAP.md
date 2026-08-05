@@ -1,6 +1,6 @@
 # Roadmap Soluteg — Status e Próximos Passos
 
-**Última atualização:** 18/05/2026
+**Última atualização:** 05/08/2026
 **Dedicação:** ~3h/dia
 **Princípio:** uma fase por vez. Não pular. Não misturar.
 
@@ -96,7 +96,7 @@ Visão arquitetural completa em [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDO
 - **14/05/2026** — Bugfix paralelo: aprovação de orçamento via link público falhava ao gerar OS. Causa: `getBudgetByToken` sem `adminId`/`priority` no SELECT. Mergeado em master, deployado em produção (commit `51a18a7`).
 - **15/05/2026** — Sub-fase 3.7.1b concluída em staging. 5 tabelas multi-tenant criadas com `utf8mb4_bin`, 4 FKs e 18 índices. Senha do banco staging rotacionada.
 - **18/05/2026** — Sub-fase 3.7.1c concluída em staging. 38 tabelas operacionais receberam coluna `tenantId INT NULL`. Dados existentes intactos (29 clients, 76 workOrders, 270 products). Bug descoberto: `grep -v "statement-breakpoint"` não funciona quando os marcadores estão inline; solução documentada em `PENDENCIAS_DEPLOY_PRODUCAO.md` (`sed` em vez de `grep -v`).
-- **05/08/2026** — Sub-fases 3.7.1d e 3.7.1e concluídas em staging. Script `scripts/migrate-to-multi-tenant.ts` finalizado e aplicado com `--apply`: 2 tenants criados (`jnc` id=1 e `soluteg-direto` id=2), platformAdmin Thiago Lopes criado (id=1), `tenantId=1` populado em 109.230 linhas de 38 tabelas, ALTERs `condominiums.type` e `clients.gestorId` aplicados. Zero NULLs residuais, integridade referencial validada. Backups pré/pós em `/var/backups/soluteg-staging/`.
+- **05/08/2026** — Sub-fases 3.7.1d e 3.7.1e concluídas em staging. Script `scripts/migrate-to-multi-tenant.ts` finalizado e aplicado com `--apply`: 2 tenants criados (`jnc` id=1 e `soluteg-direto` id=2), platformAdmin Thiago Lopes criado (id=1). A Etapa 3 (popular `tenantId`) atualizou 0 linhas porque os dados já haviam sido migrados em execução `--apply` anterior (script idempotente via `WHERE tenantId IS NULL`). Estado final validado: 29 clients, 75 workOrders, 270 products — todos com `tenantId=1`, zero NULLs residuais, integridade referencial OK. ALTERs `condominiums.type` e `clients.gestorId` aplicados. Backups pré/pós em `/var/backups/soluteg-staging/`.
 
 ### Pendência crítica
 
