@@ -1,6 +1,6 @@
 # Soluteg — Documento Técnico de Arquitetura e Handoff
 
-> **Versão:** 1.0
+> **Versão:** 1.1
 > **Data:** 05 de agosto de 2026
 > **Autor:** Thiago (com assessoria de Claude AI)
 > **Audiência:** Arquiteto de software, desenvolvedores seniores, contributors técnicos
@@ -732,16 +732,54 @@ O script também passou a usar `getDb()` de `server/db.ts` (pool com `timezone: 
 
 **Estimativa:** 20 min execução, 15 min validação.
 
-### 9.5 Sub-fase 3.7.2 — Isolamento de queries
+### 9.5 Sub-fase 3.7.2 — Isolamento de queries: proposta de arquitetura
 
-**Escopo:** o mais sensível e crítico de todas as sub-fases.
+> **STATUS: PROPOSTA — pendente de decisão de Thiago + irmão (arquiteto). Não implementado.**
+> Este é um rascunho para revisão conjunta, **não** uma decisão final nem código existente.
+> Nada aqui foi codado. Serve para Thiago e o irmão avaliarem antes de desenhar o código.
 
-- Criar helper `forTenant(table, tenantId)` em `server/lib/tenantScope.ts`
-- Auditar **TODAS** as queries do projeto e adaptar para usar o helper
-- Code review checklist: PRs que tocam queries SQL sem `forTenant` são rejeitadas
-- Teste explícito: criar tenant B com dados, validar que admin JNC NÃO acessa tenant B (mesmo manipulando IDs no front)
+**Escopo:** a sub-fase mais sensível e crítica de todas.
 
-**Estimativa:** 10-15h de auditoria + 5h de testes. **Sub-fase mais arriscada.**
+#### Contexto do problema
+
+- Hoje as queries dos routers tRPC **não filtram por tenant**. Cada `db.select().from(X)` lê dados de todos os tenants.
+- O código ainda **NÃO popula `tenantId` em nenhum INSERT** (verificado: `tenantId` só aparece em `server/pdvSchema.ts`, em nenhum router). Por isso a 3.7.2 (isolamento) vem **ANTES** da 3.7.1f (NOT NULL) — aplicar NOT NULL antes quebraria toda criação de registro em runtime.
+- **Descoberta importante:** `adminProcedure` e `protectedProcedure` em `server/_core/trpc.ts` são **código morto** — dependem de `ctx.user.role`, mas `ctx.user` é sempre `null` (OAuth Manus foi removido). O portão de admin real é o `adminLocalProcedure`, via `ctx.adminId`. O wiring de tenant deve ir **no `adminLocalProcedure` e no `createContext`**, não no `adminProcedure`.
+
+#### Proposta (3 decisões)
+
+**1. Origem do `tenantId`: derivar no `createContext` a partir do banco, NÃO colocar no JWT.**
+- *Justificativa:* o token prova **identidade** (quem), não **autorização** (qual tenant). Evita *staleness* (tokens são de 7 dias, sem refresh nem revogação — dívida conhecida). Fonte única da verdade no banco.
+- *Honestidade:* colocar `tenantId` no token **não** seria inseguro (JWT é assinado, não dá pra forjar) — o caso contra é *staleness*/acoplamento, não falsificação.
+- *Custo:* 1 query indexada extra por request (`SELECT tenantId ... WHERE id = ?`). Trivial na escala da JNC. Cachear só se algum dia pesar.
+
+**2. Admin legado → tenant: Caminho A agora, Caminho B depois.**
+- *Caminho A (agora, dentro da 3.7.2):* adicionar coluna `tenantId` **NULL** na tabela `admins` e fazer backfill = 1 (JNC). O **NOT NULL fica para a 3.7.1f**, junto com o das demais tabelas — aplicar NOT NULL agora quebraria os caminhos que criam admin sem `tenantId` (ex.: registro via convite em `redeemInvite`, `server/db.ts:275`; `createAdmin`, `server/db.ts:201`). O `fail-closed` da 3.7.2 já garante a segurança em runtime, então o NOT NULL no banco não precisa vir antes da hora. Passo mínimo, reversível, destrava o isolamento sem refatorar identidade.
+- *Caminho B (adiado para 3.7.3/3.7.4):* unificar o modelo de identidade (`admins` × `gestors` × `platformAdmins`, que têm papéis sobrepostos). É refactor maior, pertence à fase de identidade/UI. **Caminho A não fecha a porta do B.**
+- *Dívida registrada:* passam a existir **três** tabelas de identidade com papéis sobrepostos; a unificação é decisão futura.
+
+**3. Invariante fail-closed (o ponto de segurança mais importante).**
+- O helper `forTenant` **DEVE lançar erro** se o `tenantId` do contexto for `null`/ausente. **NUNCA** retornar query sem filtro. O pior bug de SaaS multi-tenant é "sem tenant no contexto" ser tratado como "vê tudo".
+- `adminLocalProcedure` resolve o `tenantId` e **estoura se for null** — nunca assume default.
+- O `platformAdmin` (cross-tenant, sem `tenantId`) precisa de um caminho de acesso cross-tenant **SEPARADO e explícito** — código isolado, óbvio, auditado. Nunca "o mesmo helper, mas sem filtro".
+
+#### Escopo de isolamento
+
+- **PDV fica FORA do multi-tenant** (decisão já registrada no `ROADMAP.md`): exclusivo da JNC. As 6 tabelas de PDV (`products`, `sales`, `saleItems`, `cashTransactions`, `customers`, `categories`) não entram no isolamento.
+- **~12–14 routers** precisam de isolamento (de **20** no total). Maiores: `workOrders` (893 linhas), `laudos` (664), `budgets` (508). **Estratégia sugerida:** aplicar dos menores para os maiores, firmando o padrão do helper antes de encarar o `workOrders`.
+
+#### Estado dos backfills (verificado Ago/2026)
+
+- `clients`, `workOrders`, `products`, `technicians`: todos `tenantId = 1`. ✓
+- `admins`: ainda **sem** coluna `tenantId` (Caminho A resolve).
+
+#### Pontos para o irmão revisar / decidir
+
+- Concorda com a **Opção 2** (tenant derivado no contexto) vs colocar no token?
+- Concorda com **Caminho A agora + B adiado**?
+- Validar o desenho do `forTenant` **fail-closed** e do **ramo cross-tenant** do `platformAdmin` antes de implementar.
+
+**Estimativa (se a proposta for aprovada):** 10-15h de auditoria + 5h de testes. **Sub-fase mais arriscada.**
 
 ### 9.6 Sub-fases 3.7.3 a 3.7.8
 
