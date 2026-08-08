@@ -73,6 +73,7 @@ export type InsertInvite = typeof invites.$inferInsert;
  */
 export const admins = mysqlTable("admins", {
   id: int("id").autoincrement().primaryKey(),
+  tenantId: int("tenantId"),   // 3.7.2/Caminho A: NULL por ora; NOT NULL fica pra 3.7.1f
   username: varchar("username", { length: 100 }).notNull().unique(),
   email: varchar("email", { length: 320 }).notNull().unique(),
   password: varchar("password", { length: 255 }).notNull(),

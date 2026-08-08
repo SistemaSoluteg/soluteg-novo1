@@ -55,10 +55,20 @@ export const adminLocalProcedure = t.procedure.use(
 
     const adminId = ctx.adminId as number;
 
+    // 3.7.2 fail-closed: identidade autenticada SEM tenant é estado inválido
+    if (ctx.tenantId == null) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "Sessão sem tenant associado. Faça login novamente.",
+      });
+    }
+    const tenantId = ctx.tenantId as number;
+
     return next({
       ctx: {
         ...ctx,
         adminId,
+        tenantId,
       },
     });
   }),
@@ -75,10 +85,20 @@ export const protectedClientProcedure = t.procedure.use(
 
     const clientId = ctx.clientId as number;
 
+    // 3.7.2 fail-closed: identidade autenticada SEM tenant é estado inválido
+    if (ctx.tenantId == null) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "Sessão sem tenant associado. Faça login novamente.",
+      });
+    }
+    const tenantId = ctx.tenantId as number;
+
     return next({
       ctx: {
         ...ctx,
         clientId,
+        tenantId,
       },
     });
   }),
@@ -95,10 +115,20 @@ export const protectedTechnicianProcedure = t.procedure.use(
 
     const technicianId = ctx.technicianId as number;
 
+    // 3.7.2 fail-closed: identidade autenticada SEM tenant é estado inválido
+    if (ctx.tenantId == null) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "Sessão sem tenant associado. Faça login novamente.",
+      });
+    }
+    const tenantId = ctx.tenantId as number;
+
     return next({
       ctx: {
         ...ctx,
         technicianId,
+        tenantId,
       },
     });
   }),

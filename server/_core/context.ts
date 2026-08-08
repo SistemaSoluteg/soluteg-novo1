@@ -1,6 +1,9 @@
 import type { CreateExpressContextOptions } from "@trpc/server/adapters/express";
 import type { User } from "../../drizzle/schema";
+import { admins, clients, technicians } from "../../drizzle/schema";
+import { eq } from "drizzle-orm";
 import { verifyToken, verifyClientToken, verifyTechnicianToken } from "../adminAuth";
+import { getDb } from "../db";
 
 export type TrpcContext = {
   req: CreateExpressContextOptions["req"];
@@ -9,6 +12,7 @@ export type TrpcContext = {
   adminId: number | null;
   clientId: number | null;
   technicianId: number | null;
+  tenantId: number | null;   // 3.7.2: resolvido da identidade presente; null se não-autenticado
 };
 
 export async function createContext(
@@ -87,6 +91,37 @@ export async function createContext(
     }
   }
 
+  // --- 3.7.2: resolver tenantId a partir da identidade presente ---
+  // Precedência admin > client > technician (na prática só um token existe;
+  // isto é desempate defensivo). Cada identidade lê uma tabela diferente.
+  // Login de gestor (tabela `gestors`) ainda NÃO existe — será a 3.7.6, com ramo próprio.
+  // tenantId fica null em rota pública/login — o fail-closed é no procedure/helper, não aqui.
+  let tenantId: number | null = null;
+  try {
+    const db = await getDb();
+    if (db) {
+      if (adminId != null) {
+        const [row] = await db
+          .select({ tenantId: admins.tenantId })
+          .from(admins).where(eq(admins.id, adminId)).limit(1);
+        tenantId = row?.tenantId ?? null;
+      } else if (clientId != null) {
+        const [row] = await db
+          .select({ tenantId: clients.tenantId })
+          .from(clients).where(eq(clients.id, clientId)).limit(1);
+        tenantId = row?.tenantId ?? null;
+      } else if (technicianId != null) {
+        const [row] = await db
+          .select({ tenantId: technicians.tenantId })
+          .from(technicians).where(eq(technicians.id, technicianId)).limit(1);
+        tenantId = row?.tenantId ?? null;
+      }
+    }
+  } catch (err) {
+    console.error("[createContext] falha ao resolver tenantId:", err);
+    tenantId = null;   // qualquer erro → null → fail-closed a jusante
+  }
+
   return {
     req: opts.req,
     res: opts.res,
@@ -94,5 +129,6 @@ export async function createContext(
     adminId,
     clientId,
     technicianId,
+    tenantId,
   };
 }
