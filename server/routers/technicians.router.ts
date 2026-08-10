@@ -6,15 +6,14 @@ import * as technicianDb from "../technicianDb";
 
 export const techniciansRouter = router({
   list: adminLocalProcedure
-    .input(z.object({ adminId: z.number() }))
-    .query(async ({ input }) => {
-      return await technicianDb.getTechniciansByAdminId(input.adminId);
+    .query(async ({ ctx }) => {
+      return await technicianDb.getTechniciansByTenant(ctx.tenantId);
     }),
 
   getById: adminLocalProcedure
     .input(z.object({ id: z.number() }))
-    .query(async ({ input }) => {
-      const t = await technicianDb.getTechnicianById(input.id);
+    .query(async ({ input, ctx }) => {
+      const t = await technicianDb.getTechnicianById(input.id, ctx.tenantId);
       if (!t) throw new TRPCError({ code: "NOT_FOUND", message: "Técnico não encontrado" });
       const { password: _pw, ...rest } = t;
       return rest;
@@ -22,7 +21,6 @@ export const techniciansRouter = router({
 
   create: adminLocalProcedure
     .input(z.object({
-      adminId:        z.number(),
       name:           z.string().min(1),
       email:          z.string().email().optional().or(z.literal("")),
       username:       z.string().min(3),
@@ -31,23 +29,26 @@ export const techniciansRouter = router({
       phone:          z.string().optional(),
       specialization: z.string().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const existing = await technicianDb.getTechnicianByUsername(input.username);
       if (existing) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Nome de usuário já está em uso" });
       }
       const hashedPw = await hashPassword(input.password);
-      await technicianDb.createTechnician({
-        adminId:        input.adminId,
-        name:           input.name,
-        email:          input.email || null,
-        username:       input.username,
-        password:       hashedPw,
-        cpf:            input.cpf || null,
-        phone:          input.phone || null,
-        specialization: input.specialization || null,
-        active:         1,
-      });
+      await technicianDb.createTechnician(
+        {
+          adminId:        ctx.adminId,
+          name:           input.name,
+          email:          input.email || null,
+          username:       input.username,
+          password:       hashedPw,
+          cpf:            input.cpf || null,
+          phone:          input.phone || null,
+          specialization: input.specialization || null,
+          active:         1,
+        },
+        ctx.tenantId,
+      );
       return { success: true, message: "Técnico criado com sucesso" };
     }),
 
@@ -61,24 +62,24 @@ export const techniciansRouter = router({
       specialization: z.string().optional(),
       active:         z.number().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const { id, ...data } = input;
-      await technicianDb.updateTechnician(id, data);
+      await technicianDb.updateTechnician(id, data, ctx.tenantId);
       return { success: true, message: "Técnico atualizado com sucesso" };
     }),
 
   updatePassword: adminLocalProcedure
     .input(z.object({ id: z.number(), newPassword: z.string().min(6) }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const hashedPw = await hashPassword(input.newPassword);
-      await technicianDb.updateTechnicianPassword(input.id, hashedPw);
+      await technicianDb.updateTechnicianPassword(input.id, hashedPw, ctx.tenantId);
       return { success: true, message: "Senha atualizada com sucesso" };
     }),
 
   delete: adminLocalProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
-      await technicianDb.deleteTechnician(input.id);
+    .mutation(async ({ input, ctx }) => {
+      await technicianDb.deleteTechnician(input.id, ctx.tenantId);
       return { success: true, message: "Técnico removido com sucesso" };
     }),
 });

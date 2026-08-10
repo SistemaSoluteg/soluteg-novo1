@@ -49,3 +49,31 @@ export function withTenant<V extends Record<string, unknown>>(
 ): V & { tenantId: number } {
   return { ...values, tenantId: requireTenant(ctx) };
 }
+
+/**
+ * Variante de `forTenant` que recebe o tenantId diretamente (número já resolvido).
+ * Usar dentro de funções de módulo de dados (ex.: technicianDb.ts) que recebem
+ * tenantId como parâmetro em vez de ctx.
+ */
+export function forTenantId<C extends MySqlColumn>(
+  tenantId: number,
+  table: { tenantId: C },
+) {
+  if (tenantId == null) {
+    throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Tenant scope ausente (fail-closed)." });
+  }
+  return eq(table.tenantId, tenantId);
+}
+
+/**
+ * Variante de `withTenant` que recebe o tenantId diretamente.
+ */
+export function withTenantId<V extends Record<string, unknown>>(
+  tenantId: number,
+  values: V & { tenantId?: never },
+): V & { tenantId: number } {
+  if (tenantId == null) {
+    throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Tenant scope ausente (fail-closed)." });
+  }
+  return { ...values, tenantId };
+}

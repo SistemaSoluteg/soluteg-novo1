@@ -766,7 +766,7 @@ O script também passou a usar `getDb()` de `server/db.ts` (pool com `timezone: 
 #### Escopo de isolamento
 
 - **PDV fica FORA do multi-tenant** (decisão já registrada no `ROADMAP.md`): exclusivo da JNC. As 6 tabelas de PDV (`products`, `sales`, `saleItems`, `cashTransactions`, `customers`, `categories`) não entram no isolamento.
-- **~12–14 routers** precisam de isolamento (de **20** no total). Maiores: `workOrders` (893 linhas), `laudos` (664), `budgets` (508). **Estratégia sugerida:** aplicar dos menores para os maiores, firmando o padrão do helper antes de encarar o `workOrders`.
+- **~12–14 routers** precisam de isolamento (de **20** no total). Maiores: `workOrders` (893 linhas), `laudos` (664), `budgets` (508). **Estratégia sugerida:** aplicar dos menores para os maiores, firmando o padrão do helper antes de encarar o `workOrders`. **Piloto escolhido: `technicians`** (`products` fora de escopo — PDV exclusivo da JNC, decisão ROADMAP 05/08/2026).
 
 #### Estado dos backfills (verificado Ago/2026)
 

@@ -1,30 +1,35 @@
-import { eq, desc } from "drizzle-orm";
+import { and, eq, desc } from "drizzle-orm";
 import { getDb } from "./db";
 import { technicians, InsertTechnician, Technician, workOrders, clients } from "../drizzle/schema";
+import { forTenantId, withTenantId } from "./_core/tenant";
 
 export async function createTechnician(
-  data: Omit<InsertTechnician, "id" | "createdAt" | "updatedAt">
+  data: Omit<InsertTechnician, "id" | "createdAt" | "updatedAt" | "tenantId">,
+  tenantId: number,
 ): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.insert(technicians).values(data as InsertTechnician);
+  await db.insert(technicians).values(withTenantId(tenantId, data) as InsertTechnician);
 }
 
-export async function getTechniciansByAdminId(adminId: number): Promise<Omit<Technician, "password">[]> {
+export async function getTechniciansByTenant(tenantId: number): Promise<Omit<Technician, "password">[]> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const rows = await db
     .select()
     .from(technicians)
-    .where(eq(technicians.adminId, adminId))
+    .where(forTenantId(tenantId, technicians))
     .orderBy(desc(technicians.createdAt));
   return rows.map(({ password: _pw, ...rest }) => rest);
 }
 
-export async function getTechnicianById(id: number): Promise<Technician | undefined> {
+export async function getTechnicianById(id: number, tenantId?: number): Promise<Technician | undefined> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const rows = await db.select().from(technicians).where(eq(technicians.id, id)).limit(1);
+  const where = tenantId != null
+    ? and(eq(technicians.id, id), forTenantId(tenantId, technicians))
+    : eq(technicians.id, id);
+  const rows = await db.select().from(technicians).where(where).limit(1);
   return rows[0];
 }
 
@@ -37,17 +42,18 @@ export async function getTechnicianByUsername(username: string): Promise<Technic
 
 export async function updateTechnician(
   id: number,
-  data: Partial<Pick<InsertTechnician, "name" | "email" | "cpf" | "phone" | "specialization" | "active">>
+  data: Partial<Pick<InsertTechnician, "name" | "email" | "cpf" | "phone" | "specialization" | "active">>,
+  tenantId: number,
 ): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(technicians).set(data).where(eq(technicians.id, id));
+  await db.update(technicians).set(data).where(and(eq(technicians.id, id), forTenantId(tenantId, technicians)));
 }
 
-export async function updateTechnicianPassword(id: number, hashedPassword: string): Promise<void> {
+export async function updateTechnicianPassword(id: number, hashedPassword: string, tenantId: number): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(technicians).set({ password: hashedPassword }).where(eq(technicians.id, id));
+  await db.update(technicians).set({ password: hashedPassword }).where(and(eq(technicians.id, id), forTenantId(tenantId, technicians)));
 }
 
 export async function updateTechnicianLastLogin(id: number): Promise<void> {
@@ -56,12 +62,12 @@ export async function updateTechnicianLastLogin(id: number): Promise<void> {
   await db.update(technicians).set({ lastLogin: new Date() }).where(eq(technicians.id, id));
 }
 
-export async function deleteTechnician(id: number): Promise<void> {
+export async function deleteTechnician(id: number, tenantId: number): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  // NULL out any assigned OS before deleting
-  await db.update(workOrders).set({ technicianId: null }).where(eq(workOrders.technicianId, id));
-  await db.delete(technicians).where(eq(technicians.id, id));
+  // NULL out any assigned OS before deleting — filtro de tenant obrigatório para não zerar OS de outro tenant
+  await db.update(workOrders).set({ technicianId: null }).where(and(forTenantId(tenantId, workOrders), eq(workOrders.technicianId, id)));
+  await db.delete(technicians).where(and(eq(technicians.id, id), forTenantId(tenantId, technicians)));
 }
 
 export type WorkOrderSummary = {

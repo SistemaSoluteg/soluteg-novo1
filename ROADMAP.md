@@ -13,7 +13,7 @@
 ⏭️  Fase 2   — Pulada deliberadamente (hardware definido fora do código)
 ✅ Fase 3   — Portal técnico PWA offline
 🟡 Fase 3.6 — Web Push (infra pronta, ativação adiada para após multi-tenant)
-🟡 Fase 3.7 — Multi-tenant (EM ANDAMENTO — Sub-fase 3.7.1e concluída, próxima: 3.7.2 isolamento de queries)
+🟡 Fase 3.7 — Multi-tenant (EM ANDAMENTO — 3.7.2 em andamento: fundação + piloto `technicians` concluídos)
 ⏳ Fase 4   — Validação comercial
 ⏳ Fase 5   — Landing page comercial soluteg.com.br
 ```
@@ -81,11 +81,11 @@ Visão arquitetural completa em [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDO
 | 3.7.1c | Adicionar `tenantId` nas tabelas existentes (nullable) | ✅ Concluída |
 | 3.7.1d | Script de migração de dados (dry-run) | ✅ Concluída |
 | 3.7.1e | Executar migração real + criar conta platformAdmin | ✅ Concluída |
-| 3.7.2 | Isolamento de queries (helper `forTenant`) — **mais crítica** | ⏳ PRÓXIMA |
+| 3.7.2 | Isolamento de queries (helper `forTenant`) — **mais crítica** | 🟡 EM ANDAMENTO (fundação + piloto `technicians` concluídos; próximo: escalar para demais routers) |
 | 3.7.1f | `tenantId` NOT NULL + FKs + índices + rotacionar JWT_SECRET — **travamento final, só depois de 3.7.2** | ⏳ Pendente (após o isolamento) |
 | 3.7.3 | Procedures tRPC tipadas por papel | ⏳ Pendente |
 | 3.7.4 | UI portal platformAdmin | ⏳ Pendente |
-| 3.7.5 | Branding dinâmico por tenant | ⏳ Pendente |
+| 3.7.5 | Branding dinâmico por tenant + campo `cnpj` na tabela `tenants` (pré-preencher campo documento nos modais de assinatura) | ⏳ Pendente |
 | 3.7.6 | Fluxo de primeiro acesso do gestor migrado | ⏳ Pendente |
 | 3.7.7 | Auditoria ativa (registrar ações sensíveis) | ⏳ Pendente |
 | 3.7.8 | Testes E2E de isolamento | ⏳ Pendente |
@@ -106,6 +106,8 @@ O **PDV (ponto de venda)** **não** será multi-tenant: fica **exclusivo da loja
 - **18/05/2026** — Sub-fase 3.7.1c concluída em staging. 38 tabelas operacionais receberam coluna `tenantId INT NULL`. Dados existentes intactos (29 clients, 76 workOrders, 270 products). Bug descoberto: `grep -v "statement-breakpoint"` não funciona quando os marcadores estão inline; solução documentada em `PENDENCIAS_DEPLOY_PRODUCAO.md` (`sed` em vez de `grep -v`).
 - **05/08/2026** — Sub-fases 3.7.1d e 3.7.1e concluídas em staging. Script `scripts/migrate-to-multi-tenant.ts` finalizado e aplicado com `--apply`: 2 tenants criados (`jnc` id=1 e `soluteg-direto` id=2), platformAdmin Thiago Lopes criado (id=1). A Etapa 3 (popular `tenantId`) atualizou 0 linhas porque os dados já haviam sido migrados em execução `--apply` anterior (script idempotente via `WHERE tenantId IS NULL`). Estado final validado: 29 clients, 75 workOrders, 270 products — todos com `tenantId=1`, zero NULLs residuais, integridade referencial OK. ALTERs `condominiums.type` e `clients.gestorId` aplicados. Backups pré/pós em `/var/backups/soluteg-staging/`.
 - **05/08/2026** — Reordenação de sub-fases: **3.7.2 (isolamento de queries) passa a vir antes de 3.7.1f (NOT NULL)**. Motivo: verificado via `grep` que o código ainda **não popula `tenantId` nos INSERTs** (a coluna aparece só em `server/pdvSchema.ts`, em nenhum router) — aplicar NOT NULL agora quebraria a criação de registros em runtime. Decidido também que o **PDV fica fora do multi-tenant** (exclusivo da JNC): as 6 tabelas de PDV (`products`, `sales`, `saleItems`, `cashTransactions`, `customers`, `categories`) saem do escopo de isolamento de queries.
+- **08/08/2026** — 3.7.2 fundação concluída em staging e validada (commit `d26a26b`). Implementados: `server/_core/tenant.ts` (`forTenant`/`withTenant` fail-closed), `tenantId` no `TrpcContext` resolvido por query no `createContext`, fail-closed injetado nos 3 procedures ativos (`adminLocalProcedure`, `protectedClientProcedure`, `protectedTechnicianProcedure`). Coluna `admins.tenantId INT NULL` adicionada e backfill=1 aplicado em staging. 3 logins validados em `tst.soluteg.com.br` sem erros. Bug de infra corrigido: processo pm2 `soluteg-staging` apontava para diretório de produção; criado `ecosystem.config.cjs` no diretório correto.
+- **10/08/2026** — 3.7.2 piloto `technicians` concluído. Adicionados `forTenantId`/`withTenantId` (variantes que recebem `tenantId: number` direto, para uso em módulos de dados). Router `technicians` isolado: `list` filtra por tenant, `create` carimba `tenantId`, `getById`/`update`/`updatePassword`/`delete` escopados por tenant. `deleteTechnician` corrigido para filtrar por tenant também no UPDATE de workOrders (write cross-tenant eliminado). `adminId` removido do input schema de `list` e `create` — IDs sempre vêm do contexto.
 
 ### Pendência crítica
 
