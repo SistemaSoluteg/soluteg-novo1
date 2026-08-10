@@ -80,7 +80,7 @@ export default function AdminBudgetDetail() {
   // ─── Modais ──────────────────────────────────────────────────────────
   const [finalizeModalOpen, setFinalizeModalOpen] = useState(false);
   const [techName, setTechName] = useState(adminName);
-  const [techDoc, setTechDoc] = useState("");
+  const [techDoc, setTechDoc] = useState("27.335.357/0001-87");
   const [techSignature, setTechSignature] = useState("");
 
   const [approveModalOpen, setApproveModalOpen] = useState(false);
@@ -905,7 +905,7 @@ const updateItem = (idx: number, field: keyof BudgetItem, raw: string | number) 
             </div>
             <div>
               <Label>Documento(opcional)</Label>
-              <Input value={techDoc} onChange={(e) => setTechDoc(e.target.value)} placeholder="27.335.357-0001-87" />
+              <Input value={techDoc} onChange={(e) => setTechDoc(e.target.value)} placeholder="000.000.000-00" />
             </div>
             <div>
               <Label>Assinatura *</Label>
