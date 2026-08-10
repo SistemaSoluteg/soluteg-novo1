@@ -80,7 +80,7 @@ export default function AdminBudgetDetail() {
   // ─── Modais ──────────────────────────────────────────────────────────
   const [finalizeModalOpen, setFinalizeModalOpen] = useState(false);
   const [techName, setTechName] = useState(adminName);
-  const [techDoc, setTechDoc] = useState("");
+  const [techDoc, setTechDoc] = useState("27.335.357/0001-87");
   const [techSignature, setTechSignature] = useState("");
 
   const [approveModalOpen, setApproveModalOpen] = useState(false);
