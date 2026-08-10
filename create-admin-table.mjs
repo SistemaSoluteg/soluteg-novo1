@@ -29,7 +29,7 @@ async function main() {
 
     await connection.execute(
       `INSERT INTO admins (username, email, password, name, active) VALUES (?, ?, ?, ?, ?)`,
-      ["jnc bombas", "admin@soluteg.com", hashedPassword, "JNC Bombas", 1]
+      ["jnc bombas", "contato@soluteg.com", hashedPassword, "JNC Elétrica e Bombas Ltda", 1]
     );
     console.log("✅ Admin padrão criado: jnc bombas / 011992");
 

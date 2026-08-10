@@ -904,8 +904,8 @@ const updateItem = (idx: number, field: keyof BudgetItem, raw: string | number) 
               <Input value={techName} onChange={(e) => setTechName(e.target.value)} placeholder="Nome completo" />
             </div>
             <div>
-              <Label>CPF / RG (opcional)</Label>
-              <Input value={techDoc} onChange={(e) => setTechDoc(e.target.value)} placeholder="000.000.000-00" />
+              <Label>Documento(opcional)</Label>
+              <Input value={techDoc} onChange={(e) => setTechDoc(e.target.value)} placeholder="27.335.357-0001-87" />
             </div>
             <div>
               <Label>Assinatura *</Label>
