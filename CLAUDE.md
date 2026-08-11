@@ -4,7 +4,7 @@
 > Contém o **contexto operacional vivo** — o que está sendo feito agora, regras invioláveis, comandos comuns.
 > Para visão arquitetural completa, ver [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDOFF.md).
 
-**Última atualização:** 05/08/2026 (após Sub-fases 3.7.1d e 3.7.1e)
+**Última atualização:** 11/08/2026 (prontos para escalar a Sub-fase 3.7.2)
 
 ---
 
@@ -22,10 +22,10 @@
 
 ---
 
-## 2. Estado atual (05/08/2026)
+## 2. Estado atual (11/08/2026)
 
 ### Em andamento
-**Fase 3.7 — Refactor multi-tenant.** Branch `multi-tenant`.
+**Fase 3.7 — Refactor multi-tenant.** Branch `multi-tenant`. **Sub-fase 3.7.2 (Isolamento de queries) em andamento — 2 routers isolados (`technicians`, `clients`).**
 
 ### Concluído recentemente
 - ✅ Sub-fase 3.7.1a — Tabelas de auditoria (`auditLog`, `loginAttempts`, `migrationAuditLog`) + helper `server/lib/environment.ts`
@@ -35,14 +35,18 @@
 - ✅ Sub-fase 3.7.1c — 38 tabelas operacionais receberam `tenantId INT NULL`. Total: 41 tabelas com `tenantId` no banco. Dados existentes intactos (29 clients, 76 workOrders, 270 products).
 - ✅ Sub-fase 3.7.1d — Script `scripts/migrate-to-multi-tenant.ts` finalizado e validado em dry-run. Bug de leitura do mysql2 corrigido (`db.execute()` retorna `[linhas, metadata]`, não `[linhas]`).
 - ✅ Sub-fase 3.7.1e — Migração aplicada em staging (`--apply`): tenant JNC (id=1) e Soluteg Direto (id=2) criados, platformAdmin Thiago (id=1) criado, `tenantId=1` em 109.230 linhas de 38 tabelas. ALTERs `condominiums.type` e `clients.gestorId` aplicados. Zero NULLs, integridade referencial validada.
+- ✅ Reordenação de sub-fases: **3.7.2 (isolamento) ANTES de 3.7.1f (NOT NULL)**.
+- ✅ Sub-fase 3.7.2 (Fundação): Helper `forTenant` fail-closed, `tenantId` no `TrpcContext`, `admins.tenantId` adicionada e populada em staging.
+- ✅ Sub-fase 3.7.2 (Piloto): Router `technicians` 100% isolado por tenant.
+- ✅ Sub-fase 3.7.2 (Escala, router 2/N): Router `clients` isolado por tenant (commit `91e0403`), incluindo correção de um IDOR pré-existente em `equipment.remove` (sem checagem de posse alguma antes desta mudança). `getClientByUsername` permanece global — é usada pelo login do cliente, que não passa pelo router. Detalhes em [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDOFF.md) seção 8.8.
 
 ### Próxima
-**Sub-fase 3.7.1f — `tenantId` NOT NULL + FKs + índices + rotação do JWT_SECRET.**
+**Sub-fase 3.7.2 (Escala):** Isolar o próximo router (ex: `budgets`).
 
-Após confirmar zero NULLs em staging (já validado na 3.7.1e), tornar `tenantId` NOT NULL nas 38 tabelas operacionais, adicionar FKs `tenantId → tenants.id`, criar índices, e rotacionar o `JWT_SECRET` para invalidar sessões antigas.
+Após os pilotos de `technicians` e `clients`, o próximo passo é continuar escalando a implementação do helper `forTenant` para os demais routers da aplicação (dos menores para os maiores), garantindo o isolamento de dados em todas as queries.
 
 ### Roadmap restante (resumo)
-3.7.1f (NOT NULL + rotação JWT) → 3.7.2 (isolamento queries via helper `forTenant` — **mais crítica de segurança**) → 3.7.3 a 3.7.8.
+3.7.2 (escalar isolamento) → 3.7.1f (NOT NULL + rotação JWT) → 3.7.3 a 3.7.8.
 
 Detalhamento completo em [`ROADMAP.md`](./ROADMAP.md).
 

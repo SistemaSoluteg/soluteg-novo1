@@ -1,6 +1,6 @@
 # Roadmap Soluteg — Status e Próximos Passos
 
-**Última atualização:** 05/08/2026
+**Última atualização:** 11/08/2026
 **Dedicação:** ~3h/dia
 **Princípio:** uma fase por vez. Não pular. Não misturar.
 
@@ -108,6 +108,8 @@ O **PDV (ponto de venda)** **não** será multi-tenant: fica **exclusivo da loja
 - **05/08/2026** — Reordenação de sub-fases: **3.7.2 (isolamento de queries) passa a vir antes de 3.7.1f (NOT NULL)**. Motivo: verificado via `grep` que o código ainda **não popula `tenantId` nos INSERTs** (a coluna aparece só em `server/pdvSchema.ts`, em nenhum router) — aplicar NOT NULL agora quebraria a criação de registros em runtime. Decidido também que o **PDV fica fora do multi-tenant** (exclusivo da JNC): as 6 tabelas de PDV (`products`, `sales`, `saleItems`, `cashTransactions`, `customers`, `categories`) saem do escopo de isolamento de queries.
 - **08/08/2026** — 3.7.2 fundação concluída em staging e validada (commit `d26a26b`). Implementados: `server/_core/tenant.ts` (`forTenant`/`withTenant` fail-closed), `tenantId` no `TrpcContext` resolvido por query no `createContext`, fail-closed injetado nos 3 procedures ativos (`adminLocalProcedure`, `protectedClientProcedure`, `protectedTechnicianProcedure`). Coluna `admins.tenantId INT NULL` adicionada e backfill=1 aplicado em staging. 3 logins validados em `tst.soluteg.com.br` sem erros. Bug de infra corrigido: processo pm2 `soluteg-staging` apontava para diretório de produção; criado `ecosystem.config.cjs` no diretório correto.
 - **10/08/2026** — 3.7.2 piloto `technicians` concluído. Adicionados `forTenantId`/`withTenantId` (variantes que recebem `tenantId: number` direto, para uso em módulos de dados). Router `technicians` isolado: `list` filtra por tenant, `create` carimba `tenantId`, `getById`/`update`/`updatePassword`/`delete` escopados por tenant. `deleteTechnician` corrigido para filtrar por tenant também no UPDATE de workOrders (write cross-tenant eliminado). `adminId` removido do input schema de `list` e `create` — IDs sempre vêm do contexto.
+- **11/08/2026** — Revisão completa da documentação e estado do projeto. Próximo passo confirmado: escalar o isolamento de queries da sub-fase 3.7.2 para os demais routers.
+- **11/08/2026** — 3.7.2 router `clients` isolado (commit `91e0403`). `list`/`broadcastMessage` passam a filtrar por `getClientsByTenant(ctx.tenantId)`; `create` carimba `tenantId` via `withTenant`; `getById`/`getByUsername`/`update`/`updatePassword`/`delete` ganharam guarda `client.tenantId !== ctx.tenantId → NOT_FOUND` (nenhum tinha checagem antes); `equipment.list`/`equipment.add` trocaram guarda de `adminId` para `tenantId`; `equipment.remove` ganhou guarda multi-etapa nova (equipamento → clientId → cliente → tenantId), corrigindo um IDOR pré-existente onde qualquer admin logado podia remover equipamento de qualquer cliente/tenant só sabendo o ID. `getClientByUsername` continua global (login do cliente não passa pelo router). Confirmado via `scripts/migrate-to-multi-tenant.ts` que `client_equipment` não está entre as 38 tabelas com `tenantId` — não tem a coluna, por isso o guard em duas etapas. `pnpm run check`: mesmos 33 erros pré-existentes de antes da mudança, zero novos.
 
 ### Pendência crítica
 

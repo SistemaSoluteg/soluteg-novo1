@@ -1,7 +1,7 @@
 # Soluteg — Documento Técnico de Arquitetura e Handoff
 
-> **Versão:** 1.1
-> **Data:** 05 de agosto de 2026
+> **Versão:** 1.2
+> **Data:** 11 de agosto de 2026
 > **Autor:** Thiago (com assessoria de Claude AI)
 > **Audiência:** Arquiteto de software, desenvolvedores seniores, contributors técnicos
 > **Status do projeto:** Em produção (JNC) | Refactor multi-tenant em andamento
@@ -509,9 +509,9 @@ Cloudinary plano grátis suporta até ~20 condomínios sem custo. Pago US$89/mê
 | 3.7.1c | Adicionar coluna `tenantId` nas tabelas existentes (nullable) | ✅ CONCLUÍDA |
 | 3.7.1d | Script de migração de dados (dry-run primeiro) | ✅ CONCLUÍDA |
 | 3.7.1e | Executar migração real + criar conta platformAdmin | ✅ CONCLUÍDA |
-| 3.7.1f | Tornar `tenantId` NOT NULL + rotacionar JWT_SECRET | ⏳ PRÓXIMA |
-| 3.7.2 | Isolamento de queries por tenant (helper centralizado + audit) | ⏳ PENDENTE |
-| 3.7.3 | Procedures tRPC tipadas (platformAdmin/tenantAdmin/gestor/technician) | ⏳ PENDENTE |
+| 3.7.2 | Isolamento de queries por tenant (helper centralizado + audit) | 🟡 EM ANDAMENTO |
+| 3.7.1f | Tornar `tenantId` NOT NULL + FKs + índices + rotacionar JWT_SECRET — **só depois de 3.7.2** | ⏳ PENDENTE |
+| 3.7.3 | Procedures tRPC tipadas por papel (platformAdmin/tenantAdmin/gestor/technician) | ⏳ PENDENTE |
 | 3.7.4 | UI: portal platformAdmin (CRUD de tenants e admins) | ⏳ PENDENTE |
 | 3.7.5 | UI: branding dinâmico por tenant (logo, cor, nome) | ⏳ PENDENTE |
 | 3.7.6 | Fluxo de "primeiro acesso" do gestor migrado (link WhatsApp único) | ⏳ PENDENTE |
@@ -675,113 +675,73 @@ O script também passou a usar `getDb()` de `server/db.ts` (pool com `timezone: 
 
 **Migration:** nenhuma DDL nova — dados populados via script.
 
+### 8.7 Sub-fase 3.7.2 — Fundação e Piloto do Isolamento de Queries (10/08/2026)
+
+**Objetivo:** Implementar a camada de isolamento de queries, a parte mais crítica de segurança do multi-tenant, antes de "travar" a coluna `tenantId` como `NOT NULL`.
+
+**Decisão de arquitetura (reordenação):** A sub-fase 3.7.2 foi movida para ANTES da 3.7.1f. A razão é que o código da aplicação ainda não populava `tenantId` nos `INSERT`s. Primeiro, o código precisa ser refatorado para lidar com `tenantId` em todas as operações; só depois a coluna pode se tornar `NOT NULL`.
+
+**Entregue (Fundação):**
+- **Helper centralizado:** Criado o `server/_core/tenant.ts` com as funções `forTenant` e `withTenant`. Elas são "fail-closed": lançam um erro se o `tenantId` do contexto for nulo, garantindo que nenhuma query seja executada sem o filtro de tenant.
+- **Contexto tRPC:** O `createContext` agora resolve o `tenantId` do usuário logado (seja `admin`, `client` ou `technician`) através de uma query no banco e o injeta no `ctx.tenantId`. A decisão foi de não colocar o `tenantId` no JWT para evitar *staleness*.
+- **Procedures tRPC:** Os procedures `adminLocalProcedure`, `protectedClientProcedure` e `protectedTechnicianProcedure` foram atualizados para usar o `ctx.tenantId` e falhar se ele não for encontrado.
+- **Schema:** A coluna `tenantId INT NULL` foi adicionada à tabela `admins` e populada com `tenantId=1` para os admins existentes em staging.
+
+**Entregue (Piloto):**
+- O router `technicians` foi o primeiro a ser 100% isolado usando os novos helpers:
+  - `list`: agora filtra por `ctx.tenantId`.
+  - `create`: agora carimba o `tenantId` do admin que está criando o técnico.
+  - `getById`, `update`, `updatePassword`, `delete`: agora são escopados pelo `tenantId`, garantindo que um admin só possa operar em técnicos do seu próprio tenant.
+- O input schema de `list` e `create` foi limpo, removendo `adminId` (que agora vem do `ctx`).
+
+**Validação:** Fundação e piloto validados em `tst.soluteg.com.br` com sucesso.
+
+### 8.8 Sub-fase 3.7.2 — Router `clients` isolado (11/08/2026)
+
+**Objetivo:** Segundo router isolado, aplicando o padrão validado no piloto `technicians`. `clients` foi escolhido por ser a tabela mais acessada do sistema (login de cliente, portal, OS, orçamentos).
+
+**Entregue:**
+- `server/db.ts`: nova função `getClientsByTenant(tenantId)` (usa `forTenantId`) e nova função `getClientEquipmentById(id)` (suporte à guarda de posse do equipamento). Nenhuma função existente teve assinatura alterada — evita quebrar os outros ~8 arquivos que chamam `getClientById`/`getClientByUsername`/etc fora deste router (`index.ts`, `budgets.router.ts`, `clientProfile.router.ts`, `technicianPortal.router.ts`, `workOrders.router.ts`).
+- `clients.router.ts`:
+  - `list`/`broadcastMessage`: `getClientsByTenant(ctx.tenantId)` em vez de `getClientsByAdminId(ctx.adminId)`.
+  - `create`: `tenantId` carimbado via `withTenant(ctx, {...})` no objeto passado a `db.createClient` (que espalha `.values(client)` sem tratamento especial de campo — por isso o carimbo tem que acontecer antes, no router).
+  - `getById`, `getByUsername`, `update`, `updatePassword`, `delete`: guarda `if (!client || client.tenantId !== ctx.tenantId) throw NOT_FOUND` antes de agir. Nenhuma dessas tinha checagem alguma antes (nem por admin, nem por tenant).
+  - `equipment.list`/`equipment.add`: guarda trocada de `client.adminId !== ctx.adminId` para `client.tenantId !== ctx.tenantId`.
+  - `equipment.remove`: ganhou guarda multi-etapa (equipamento → `clientId` → cliente → `tenantId`) que **não existia antes** — corrige um IDOR pré-existente (qualquer admin logado podia remover equipamento de qualquer cliente, de qualquer tenant, só sabendo o ID).
+- **`getClientByUsername` permanece global (sem filtro de tenant)** — é o lookup usado pelo login do cliente em `server/index.ts`, que chama `db.ts` direto e não passa por este router. A guarda de tenant foi aplicada só no endpoint administrativo `clients.getByUsername`, no resultado.
+- **`client_equipment` não tem coluna `tenantId` própria** — confirmado via `scripts/migrate-to-multi-tenant.ts` (não está na lista das 38 tabelas operacionais da Sub-fase 3.7.1c). É por isso que `equipment.remove` precisa do guard em duas etapas via o cliente dono, em vez de um filtro direto.
+- Toda a lógica de negócio original foi preservada (hash de senha, geração de usuário/senha para `sem_portal`, campos completos de `create`/`update`, `broadcastMessage` com targeting e variáveis, integração `equipment.add` → `addEquipmentToMonthlyOs`).
+
+**Validação:** `pnpm run check` comparado byte a byte contra o `HEAD` anterior à mudança — os mesmos 33 erros pré-existentes (dívida técnica em outros arquivos), zero erros novos.
+
+**Commit:** `91e0403`.
+
 ---
 
 ## 9. O que vem pela frente
 
-### 9.1 Sub-fase 3.7.1c — Adicionar `tenantId` nas tabelas existentes
+### 9.1 Sub-fase 3.7.2 — Escalar Isolamento de Queries *(🟡 EM ANDAMENTO)*
+
+**Escopo:** Aplicar o padrão de isolamento de queries, validado nos pilotos `technicians` e `clients`, para todos os demais routers da aplicação que lidam com dados operacionais.
+
+- **Estratégia:** Isolar um router por vez, dos menores para os maiores, validando cada um. Feitos: `technicians`, `clients`. Próximo router sugerido: `budgets`.
+- **PDV:** As 6 tabelas de PDV (`products`, `sales`, etc.) estão **fora** do escopo, pois a funcionalidade é exclusiva da JNC.
+
+**Estimativa:** 10-15h de auditoria e refatoração + 5h de testes. **Sub-fase mais arriscada.**
+
+### 9.2 Sub-fase 3.7.1f — NOT NULL e JWT_SECRET *(⏳ PENDENTE)*
 
 **Escopo:**
-- Adicionar coluna `tenantId int` (nullable durante migração) em:
-  - `clients`, `workOrders`, `budgets`, `technicians`, `waterTankSensors`, `products`, `sales`, `cashTransactions`, `laudos`, etc
-- Sem FK ainda (será adicionada na 3.7.1f, após populada)
-- Sem index ainda (será adicionado na 3.7.1f)
-
-**Por que separar:** mudanças aditivas (ADD COLUMN nullable) são reversíveis e seguras. Garante que aplicação continua rodando enquanto migramos.
-
-**Estimativa:** 30 min execução, 15 min validação.
-
-### 9.2 Sub-fase 3.7.1d — Script de migração de dados *(✅ Concluída — ver seção 8.5)*
-
-**Escopo:** escrever script Node.js (`scripts/migrate-to-multi-tenant.ts`) que:
-
-1. **Em modo DRY-RUN (default):** lê dados existentes, calcula o que faria, mostra preview, **não escreve nada**
-2. Cria tenant "JNC Comércio e Serviços" (slug `jnc`)
-3. Cria tenant "Soluteg Direto" (slug `soluteg-direto`, `isPlatformTenant=1`)
-4. Para cada `client` da JNC:
-   - Cria `condominium` correspondente
-   - Identifica/deduplica `gestor` (síndico)
-   - Cria `gestor` se não existe, vinculado ao tenant JNC
-   - Atribui `gestorId` ao `condominium`
-5. Para cada `workOrder`, `budget`, etc, popula `tenantId = jncTenantId`
-6. Cria conta `platformAdmin` (Thiago) — prompt interativo pede senha
-7. Registra cada ação em `migrationAuditLog`
-8. Reporta totais ao final
-
-**Em modo REAL (flag `--apply`):** mesma lógica, mas grava no banco. Usa transação MySQL onde possível. Em caso de erro, rollback.
-
-**Estimativa:** 4-6h de desenvolvimento + 2h de testes.
-
-### 9.3 Sub-fase 3.7.1e — Executar migração real em staging *(✅ Concluída — ver seção 8.6)*
-
-**Escopo:**
-- Backup obrigatório
-- Rodar script com `--apply` em staging
-- Validar contagens, integridade referencial, integridade de senhas (todos os gestores devem conseguir trocar senha)
-- Smoke test do sistema: login de admin, login de cliente, abrir OS, criar orçamento
-
-**Estimativa:** 30 min execução, 1-2h validação.
-
-### 9.4 Sub-fase 3.7.1f — NOT NULL e JWT_SECRET *(⏳ PRÓXIMA)*
-
-**Escopo:**
-- ALTER `tenantId` para NOT NULL em todas as tabelas (depois de garantir 0 nulls)
+- ALTER `tenantId` para `NOT NULL` em todas as 38 tabelas operacionais (após garantir 0 nulls).
 - Adicionar FKs `tenantId → tenants.id`
 - Adicionar índices em `tenantId`
 - Rotacionar `JWT_SECRET` (invalidar sessões antigas)
 
+**Quando:** Esta é a "trava final" e só pode ser executada **após a conclusão total da sub-fase 3.7.2**.
+
 **Estimativa:** 20 min execução, 15 min validação.
 
-### 9.5 Sub-fase 3.7.2 — Isolamento de queries: proposta de arquitetura
-
-> **STATUS: PROPOSTA — pendente de decisão de Thiago + irmão (arquiteto). Não implementado.**
-> Este é um rascunho para revisão conjunta, **não** uma decisão final nem código existente.
-> Nada aqui foi codado. Serve para Thiago e o irmão avaliarem antes de desenhar o código.
-
-**Escopo:** a sub-fase mais sensível e crítica de todas.
-
-#### Contexto do problema
-
-- Hoje as queries dos routers tRPC **não filtram por tenant**. Cada `db.select().from(X)` lê dados de todos os tenants.
-- O código ainda **NÃO popula `tenantId` em nenhum INSERT** (verificado: `tenantId` só aparece em `server/pdvSchema.ts`, em nenhum router). Por isso a 3.7.2 (isolamento) vem **ANTES** da 3.7.1f (NOT NULL) — aplicar NOT NULL antes quebraria toda criação de registro em runtime.
-- **Descoberta importante:** `adminProcedure` e `protectedProcedure` em `server/_core/trpc.ts` são **código morto** — dependem de `ctx.user.role`, mas `ctx.user` é sempre `null` (OAuth Manus foi removido). O portão de admin real é o `adminLocalProcedure`, via `ctx.adminId`. O wiring de tenant deve ir **no `adminLocalProcedure` e no `createContext`**, não no `adminProcedure`.
-
-#### Proposta (3 decisões)
-
-**1. Origem do `tenantId`: derivar no `createContext` a partir do banco, NÃO colocar no JWT.**
-- *Justificativa:* o token prova **identidade** (quem), não **autorização** (qual tenant). Evita *staleness* (tokens são de 7 dias, sem refresh nem revogação — dívida conhecida). Fonte única da verdade no banco.
-- *Honestidade:* colocar `tenantId` no token **não** seria inseguro (JWT é assinado, não dá pra forjar) — o caso contra é *staleness*/acoplamento, não falsificação.
-- *Custo:* 1 query indexada extra por request (`SELECT tenantId ... WHERE id = ?`). Trivial na escala da JNC. Cachear só se algum dia pesar.
-
-**2. Admin legado → tenant: Caminho A agora, Caminho B depois.**
-- *Caminho A (agora, dentro da 3.7.2):* adicionar coluna `tenantId` **NULL** na tabela `admins` e fazer backfill = 1 (JNC). O **NOT NULL fica para a 3.7.1f**, junto com o das demais tabelas — aplicar NOT NULL agora quebraria os caminhos que criam admin sem `tenantId` (ex.: registro via convite em `redeemInvite`, `server/db.ts:275`; `createAdmin`, `server/db.ts:201`). O `fail-closed` da 3.7.2 já garante a segurança em runtime, então o NOT NULL no banco não precisa vir antes da hora. Passo mínimo, reversível, destrava o isolamento sem refatorar identidade.
-- *Caminho B (adiado para 3.7.3/3.7.4):* unificar o modelo de identidade (`admins` × `gestors` × `platformAdmins`, que têm papéis sobrepostos). É refactor maior, pertence à fase de identidade/UI. **Caminho A não fecha a porta do B.**
-- *Dívida registrada:* passam a existir **três** tabelas de identidade com papéis sobrepostos; a unificação é decisão futura.
-
-**3. Invariante fail-closed (o ponto de segurança mais importante).**
-- O helper `forTenant` **DEVE lançar erro** se o `tenantId` do contexto for `null`/ausente. **NUNCA** retornar query sem filtro. O pior bug de SaaS multi-tenant é "sem tenant no contexto" ser tratado como "vê tudo".
-- `adminLocalProcedure` resolve o `tenantId` e **estoura se for null** — nunca assume default.
-- O `platformAdmin` (cross-tenant, sem `tenantId`) precisa de um caminho de acesso cross-tenant **SEPARADO e explícito** — código isolado, óbvio, auditado. Nunca "o mesmo helper, mas sem filtro".
-
-#### Escopo de isolamento
-
-- **PDV fica FORA do multi-tenant** (decisão já registrada no `ROADMAP.md`): exclusivo da JNC. As 6 tabelas de PDV (`products`, `sales`, `saleItems`, `cashTransactions`, `customers`, `categories`) não entram no isolamento.
-- **~12–14 routers** precisam de isolamento (de **20** no total). Maiores: `workOrders` (893 linhas), `laudos` (664), `budgets` (508). **Estratégia sugerida:** aplicar dos menores para os maiores, firmando o padrão do helper antes de encarar o `workOrders`. **Piloto escolhido: `technicians`** (`products` fora de escopo — PDV exclusivo da JNC, decisão ROADMAP 05/08/2026).
-
-#### Estado dos backfills (verificado Ago/2026)
-
-- `clients`, `workOrders`, `products`, `technicians`: todos `tenantId = 1`. ✓
-- `admins`: ainda **sem** coluna `tenantId` (Caminho A resolve).
-
-#### Pontos para o irmão revisar / decidir
-
-- Concorda com a **Opção 2** (tenant derivado no contexto) vs colocar no token?
-- Concorda com **Caminho A agora + B adiado**?
-- Validar o desenho do `forTenant` **fail-closed** e do **ramo cross-tenant** do `platformAdmin` antes de implementar.
-
-**Estimativa (se a proposta for aprovada):** 10-15h de auditoria + 5h de testes. **Sub-fase mais arriscada.**
-
-### 9.6 Sub-fases 3.7.3 a 3.7.8
+### 9.3 Sub-fases 3.7.3 a 3.7.8
 
 Detalhamento existe mas é mais especulativo nesta etapa. Resumo:
 
