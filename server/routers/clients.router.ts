@@ -4,15 +4,16 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { addEquipmentToMonthlyOs } from "../monthlyOsJob";
 import { hashPassword } from "../adminAuth";
+import { withTenant } from "../_core/tenant";
 
 export const clientsRouter = router({
-  // Lista clientes do admin autenticado — adminId vem do JWT (ctx), não do input.
+  // 3.7.2 — ISOLADO: lista por tenant (fronteira correta), não por adminId.
   list: adminLocalProcedure
     .input(z.object({
       search: z.string().optional(), // filtro de busca (usado no frontend, não na query SQL)
     }).optional())
     .query(async ({ ctx }) => {
-      return await db.getClientsByAdminId(ctx.adminId);
+      return await db.getClientsByTenant(ctx.tenantId);
     }),
 
   // Cria novo cliente vinculado ao admin autenticado — adminId vem do JWT (ctx).
@@ -52,15 +53,19 @@ export const clientsRouter = router({
 
       const hashedPassword = await hashPassword(finalPassword);
 
-      await db.createClient({
-        ...clientData,
-        adminId: ctx.adminId,
-        username: finalUsername,
-        type,
-        email: clientData.email || null,
-        password: hashedPassword,
-        active: 1,
-      });
+      // withTenant carimba tenantId a partir do ctx (fail-closed) — não aceita
+      // tenantId vindo do input.
+      await db.createClient(
+        withTenant(ctx, {
+          ...clientData,
+          adminId: ctx.adminId,
+          username: finalUsername,
+          type,
+          email: clientData.email || null,
+          password: hashedPassword,
+          active: 1,
+        })
+      );
 
       return { success: true, message: "Cliente criado com sucesso" };
     }),
@@ -77,8 +82,15 @@ export const clientsRouter = router({
       profilePhoto: z.string().optional(),
       type: z.enum(["com_portal", "sem_portal"]).optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const { id, ...updateData } = input;
+
+      // GUARDA: cliente precisa pertencer ao tenant do admin logado.
+      const existing = await db.getClientById(id);
+      if (!existing || existing.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Cliente não encontrado" });
+      }
+
       try {
         await db.updateClient(id, updateData);
         return { success: true, message: "Cliente atualizado com sucesso" };
@@ -95,7 +107,13 @@ export const clientsRouter = router({
       id: z.number(),
       newPassword: z.string().min(6),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      // GUARDA: cliente precisa pertencer ao tenant do admin logado.
+      const existing = await db.getClientById(input.id);
+      if (!existing || existing.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Cliente não encontrado" });
+      }
+
       try {
         const hashedPassword = await hashPassword(input.newPassword);
         await db.updateClientPassword(input.id, hashedPassword);
@@ -114,28 +132,45 @@ export const clientsRouter = router({
       clientId: z.number().optional(),
       adminId: z.number().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const id = input.id ?? input.clientId;
       if (!id) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "ID do cliente não informado" });
       }
+
+      // GUARDA: cliente precisa pertencer ao tenant do admin logado.
+      const existing = await db.getClientById(id);
+      if (!existing || existing.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Cliente não encontrado" });
+      }
+
       await db.deleteClient(id);
       return { success: true, message: "Cliente deletado com sucesso" };
     }),
 
+  // ISOLADO COM GUARDA
   getById: adminLocalProcedure
     .input(z.object({ id: z.number() }))
-    .query(async ({ input }) => {
-      return await db.getClientById(input.id);
+    .query(async ({ input, ctx }) => {
+      const client = await db.getClientById(input.id);
+      if (!client || client.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Cliente não encontrado" });
+      }
+      return client;
     }),
 
+  // ISOLADO COM GUARDA (getClientByUsername continua global para suportar o login)
   getByUsername: adminLocalProcedure
     .input(z.object({ username: z.string() }))
-    .query(async ({ input }) => {
-      return await db.getClientByUsername(input.username);
+    .query(async ({ input, ctx }) => {
+      const client = await db.getClientByUsername(input.username);
+      if (!client || client.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Cliente não encontrado" });
+      }
+      return client;
     }),
 
-  // Envio em massa de mensagens WhatsApp — adminId vem do JWT (ctx), não do input.
+  // 3.7.2 — ISOLADO: mensagem em massa só alcança clientes do tenant.
   broadcastMessage: adminLocalProcedure
     .input(z.object({
       message: z.string().min(1),
@@ -143,7 +178,7 @@ export const clientsRouter = router({
       clientIds: z.array(z.number()).optional(),
     }))
     .mutation(async ({ input, ctx }) => {
-      const allClients = await db.getClientsByAdminId(ctx.adminId);
+      const allClients = await db.getClientsByTenant(ctx.tenantId);
 
       let targets = allClients;
       if (input.targetType === "com_portal") {
@@ -198,9 +233,9 @@ export const clientsRouter = router({
     list: adminLocalProcedure
       .input(z.object({ clientId: z.number() }))
       .query(async ({ input, ctx }) => {
-        // Garante que o cliente pertence ao admin autenticado
+        // GUARDA: cliente precisa pertencer ao tenant do admin logado (fronteira correta).
         const client = await db.getClientById(input.clientId);
-        if (!client || client.adminId !== ctx.adminId) {
+        if (!client || client.tenantId !== ctx.tenantId) {
           throw new TRPCError({ code: "NOT_FOUND", message: "Cliente não encontrado" });
         }
         return await db.getClientEquipment(input.clientId);
@@ -218,8 +253,9 @@ export const clientsRouter = router({
         description: z.string().min(1).max(255),
       }))
       .mutation(async ({ input, ctx }) => {
+        // GUARDA: cliente precisa pertencer ao tenant do admin logado (fronteira correta).
         const client = await db.getClientById(input.clientId);
-        if (!client || client.adminId !== ctx.adminId) {
+        if (!client || client.tenantId !== ctx.tenantId) {
           throw new TRPCError({ code: "NOT_FOUND", message: "Cliente não encontrado" });
         }
 
@@ -238,10 +274,29 @@ export const clientsRouter = router({
         return { id, monthlyOs: osResult };
       }),
 
-    /** Remove um equipamento. */
+    /**
+     * Remove um equipamento.
+     * GUARDA MULTI-ETAPA (client_equipment não tem tenantId próprio):
+     * 1. busca o equipamento para achar o clientId dono;
+     * 2. busca o cliente para checar o tenantId.
+     * ANTES: sem nenhuma checagem de posse — qualquer admin logado podia
+     * remover equipamento de qualquer cliente, de qualquer tenant, só
+     * sabendo o ID. Corrigido aqui junto com o isolamento.
+     */
     remove: adminLocalProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        const equipment = await db.getClientEquipmentById(input.id);
+        if (!equipment) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Equipamento não encontrado" });
+        }
+
+        const client = await db.getClientById(equipment.clientId);
+        if (!client || client.tenantId !== ctx.tenantId) {
+          // NOT_FOUND (não FORBIDDEN) para não vazar a existência do equipamento em outro tenant.
+          throw new TRPCError({ code: "NOT_FOUND", message: "Equipamento não encontrado" });
+        }
+
         await db.removeClientEquipment(input.id);
         return { success: true };
       }),

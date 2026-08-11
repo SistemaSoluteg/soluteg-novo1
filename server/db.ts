@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/mysql2";
 import { createPool } from "mysql2/promise";
 import { InsertUser, users, reports, InsertReport, invites, InsertInvite, Invite, admins, InsertAdmin, Admin, inspectionReports, InsertInspectionReport, InspectionReport, clients, InsertClient, Client, clientDocuments, InsertClientDocument, ClientDocument, workOrders, InsertWorkOrder, WorkOrder, clientEquipment, ClientEquipment, InsertClientEquipment } from "../drizzle/schema";
 import { ENV } from './_core/env';
+import { forTenantId } from './_core/tenant';
 import crypto from "crypto";
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -432,11 +433,26 @@ export async function createClient(client: InsertClient) {
 export async function getClientsByAdminId(adminId: number): Promise<Client[]> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
- 
+
   return await db
     .select()
     .from(clients)
     .where(eq(clients.adminId, adminId))
+    .orderBy(desc(clients.createdAt));
+}
+
+/**
+ * 3.7.2 — Isolamento: lista clientes pelo tenant (fronteira correta),
+ * em vez de por adminId. Ver server/_core/tenant.ts.
+ */
+export async function getClientsByTenant(tenantId: number): Promise<Client[]> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  return await db
+    .select()
+    .from(clients)
+    .where(forTenantId(tenantId, clients))
     .orderBy(desc(clients.createdAt));
 }
  
@@ -557,6 +573,18 @@ export async function addClientEquipment(data: Omit<InsertClientEquipment, "id" 
   if (!db) throw new Error("Database not available");
   const result = await db.insert(clientEquipment).values(data);
   return result[0].insertId;
+}
+
+/** Busca um equipamento pelo ID (para checagem de posse antes de remover). */
+export async function getClientEquipmentById(id: number): Promise<ClientEquipment | undefined> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db
+    .select()
+    .from(clientEquipment)
+    .where(eq(clientEquipment.id, id))
+    .limit(1);
+  return result.length > 0 ? result[0] : undefined;
 }
 
 /** Remove um equipamento pelo ID. */
