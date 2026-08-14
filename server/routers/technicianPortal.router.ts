@@ -435,12 +435,14 @@ export const technicianPortalRouter = router({
         if (!template) throw new TRPCError({ code: "NOT_FOUND", message: "Template não encontrado" });
 
         // Reutiliza a primeira inspectionTask existente ou cria uma nova
+        // Posse já validada acima (getWorkOrderByIdForTechnician) — aqui só carimba o tenantId.
         const tasks = await checklistDb.getInspectionTasksByWorkOrder(input.workOrderId);
         const taskId = tasks.length > 0
           ? tasks[0].id
-          : await checklistDb.createInspectionTask({ workOrderId: input.workOrderId, title: "Checklists de Equipamentos" });
+          : await checklistDb.createInspectionTask({ tenantId: ctx.tenantId, workOrderId: input.workOrderId, title: "Checklists de Equipamentos" });
 
         const instanceId = await checklistDb.createChecklistInstance({
+          tenantId:         ctx.tenantId,
           inspectionTaskId: taskId,
           templateId:       input.templateId,
           customTitle:      input.customTitle,

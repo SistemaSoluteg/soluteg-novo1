@@ -69,6 +69,7 @@ export async function createMonthlyOsForClient(
 
   // Cria a tarefa de inspeção que agrupa todos os checklists
   const taskId = await createInspectionTask({
+    tenantId: client.tenantId,
     workOrderId,
     title: "Checklists de Equipamentos",
   });
@@ -81,6 +82,7 @@ export async function createMonthlyOsForClient(
       continue;
     }
     await createChecklistInstance({
+      tenantId: client.tenantId,
       inspectionTaskId: taskId,
       templateId: template.id,
       customTitle: equip.description, // subtítulo = localização/descrição do equipamento
@@ -113,6 +115,15 @@ export async function addEquipmentToMonthlyOs(
   const ano  = now.getFullYear();
   const titulo = `Vistoria de ${mes} de ${ano}`;
 
+  // tenantId vem do cliente. Buscado sempre (não só no ramo de criação da OS) porque
+  // createInspectionTask/createChecklistInstance também precisam dele mais abaixo,
+  // mesmo quando a OS do mês já existia. Diferente de createMonthlyOsForClient, aqui
+  // não dá pra pular silenciosamente — o admin está esperando o equipamento ser cadastrado.
+  const client = await getClientById(clientId);
+  if (!client?.tenantId) {
+    throw new Error("Cliente sem tenant configurado — não é possível gerar a OS mensal");
+  }
+
   // Busca OS existente ou cria uma nova
   const existing = await db
     .select({ id: workOrders.id })
@@ -126,12 +137,6 @@ export async function addEquipmentToMonthlyOs(
   if (existing.length > 0) {
     workOrderId = existing[0].id;
   } else {
-    // tenantId vem do cliente. Diferente de createMonthlyOsForClient, aqui não dá pra
-    // pular silenciosamente — o admin está esperando o equipamento ser cadastrado.
-    const client = await getClientById(clientId);
-    if (!client?.tenantId) {
-      throw new Error("Cliente sem tenant configurado — não é possível gerar a OS mensal");
-    }
     const result = await createWorkOrder({
       tenantId: client.tenantId,
       adminId,
@@ -149,12 +154,13 @@ export async function addEquipmentToMonthlyOs(
   const tasks = await getInspectionTasksByWorkOrder(workOrderId);
   const taskId = tasks.length > 0
     ? tasks[0].id
-    : await createInspectionTask({ workOrderId, title: "Checklists de Equipamentos" });
+    : await createInspectionTask({ tenantId: client.tenantId, workOrderId, title: "Checklists de Equipamentos" });
 
   // Cria checklist apenas para este equipamento
   const template = await getTemplateBySlug(equipment.type);
   if (template) {
     await createChecklistInstance({
+      tenantId: client.tenantId,
       inspectionTaskId: taskId,
       templateId: template.id,
       customTitle: equipment.description,

@@ -81,20 +81,28 @@ export async function getInspectionTaskById(id: number): Promise<InspectionTask 
 }
 
 export async function createInspectionTask(data: {
+  tenantId: number;
   workOrderId: number;
   title: string;
   description?: string;
 }): Promise<number> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
+
+  // Guarda fail-closed: sem isso, a tarefa nasce com tenantId NULL e some
+  // silenciosamente das guardas de posse do router (mesmo padrão de createWorkOrder).
+  if (!data.tenantId) {
+    throw new Error("createInspectionTask: tenantId é obrigatório e não foi informado.");
+  }
+
   const result = await db.insert(inspectionTasks).values({
+    tenantId: data.tenantId,
     workOrderId: data.workOrderId,
     title: data.title,
     description: data.description || null,
     status: "pendente",
   });
-  
+
   return result[0].insertId;
 }
 
@@ -188,6 +196,7 @@ export async function getChecklistInstanceById(id: number): Promise<ChecklistIns
 }
 
 export async function createChecklistInstance(data: {
+  tenantId: number;
   inspectionTaskId: number;
   templateId: number;
   customTitle: string;
@@ -196,8 +205,14 @@ export async function createChecklistInstance(data: {
 }): Promise<number> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
+
+  // Guarda fail-closed: mesmo padrão de createInspectionTask/createWorkOrder.
+  if (!data.tenantId) {
+    throw new Error("createChecklistInstance: tenantId é obrigatório e não foi informado.");
+  }
+
   const result = await db.insert(checklistInstances).values({
+    tenantId: data.tenantId,
     inspectionTaskId: data.inspectionTaskId,
     templateId: data.templateId,
     customTitle: data.customTitle,
@@ -206,7 +221,7 @@ export async function createChecklistInstance(data: {
     responses: null,
     isComplete: 0,
   });
-  
+
   return result[0].insertId;
 }
 
