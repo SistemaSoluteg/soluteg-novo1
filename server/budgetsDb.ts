@@ -12,6 +12,7 @@ import {
   InsertBudgetAttachment,
 } from "../drizzle/schema";
 import crypto from "crypto";
+import { forTenantId } from "./_core/tenant";
 
 // ─── Número de orçamento ───────────────────────────────────────────────────
 
@@ -47,6 +48,12 @@ export async function createBudget(
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
+  // Guarda fail-closed: mesmo com um único chamador (o router), evita que um
+  // orçamento nasça com tenantId NULL e suma silenciosamente de budgets.list.
+  if (!(data as any).tenantId) {
+    throw new Error("createBudget: tenantId é obrigatório e não foi informado.");
+  }
+
   const budgetNumber = await generateBudgetNumber();
 
   await db.insert(budgets).values({ ...data, budgetNumber, version: 1 });
@@ -66,6 +73,7 @@ export async function createBudget(
     action: "criado",
     newStatus: "pendente",
     notes: "Orçamento criado",
+    tenantId: (data as any).tenantId,
   });
 
   return { id, budgetNumber };
@@ -173,7 +181,7 @@ export async function getBudgetByToken(token: string) {
 // ─── Listar orçamentos ─────────────────────────────────────────────────────
 
 export async function listBudgets(params: {
-  adminId?: number;
+  tenantId: number;
   clientId?: number;
   status?: string;
   search?: string;
@@ -186,7 +194,7 @@ export async function listBudgets(params: {
   if (!db) return { items: [], totalCount: 0 };
 
   const {
-    adminId,
+    tenantId,
     clientId,
     status,
     search,
@@ -196,8 +204,8 @@ export async function listBudgets(params: {
     sortOrder = "desc",
   } = params;
 
-  const conditions = [];
-  if (adminId) conditions.push(eq(budgets.adminId, adminId));
+  // ISOLADO: tenantId obrigatório e sempre filtrado (fail-closed via forTenantId).
+  const conditions = [forTenantId(tenantId, budgets)];
   if (clientId) conditions.push(eq(budgets.clientId, clientId));
   if (status) conditions.push(eq(budgets.status, status as any));
   if (search) {
@@ -272,6 +280,7 @@ export async function updateBudget(
         newStatus: current.status ?? undefined,
         snapshotData: JSON.stringify({ budget: current, items }),
         notes: "Revisão do orçamento",
+        tenantId: (current as any).tenantId ?? undefined,
       });
       // Incrementa versão
       data.version = (current.version ?? 1) + 1;
@@ -308,6 +317,7 @@ export async function finalizeBudget(
       newStatus: "finalizado",
       snapshotData: JSON.stringify({ budget: current, items }),
       notes: "Nova revisão do orçamento",
+      tenantId: (current as any).tenantId ?? undefined,
     });
   }
 
@@ -340,6 +350,7 @@ export async function finalizeBudget(
     previousStatus: current.status ?? undefined,
     newStatus: "finalizado",
     notes: `Finalizado por ${technicianName}`,
+    tenantId: (current as any).tenantId ?? undefined,
   });
 
   return { token, validUntil };
@@ -379,6 +390,7 @@ export async function approveBudget(
     previousStatus: "finalizado",
     newStatus: "aprovado",
     notes: `Aprovado por ${clientSignatureName}`,
+    tenantId: (current as any).tenantId ?? undefined,
   });
 }
 
@@ -408,6 +420,7 @@ export async function rejectBudget(
     previousStatus: current.status ?? undefined,
     newStatus: "reprovado",
     notes: rejectionReason,
+    tenantId: (current as any).tenantId ?? undefined,
   });
 }
 
@@ -446,6 +459,7 @@ export async function getBudgetItems(budgetId: number) {
 
 export async function upsertBudgetItems(
   budgetId: number,
+  tenantId: number,
   items: Array<{
     id?: number;
     description: string;
@@ -466,6 +480,7 @@ export async function upsertBudgetItems(
     await db.insert(budgetItems).values(
       items.map((item) => ({
         budgetId,
+        tenantId, // carimbado a partir do budget pai (evita novos NULLs antes da 3.7.1f)
         description: item.description,
         quantity: item.quantity,
         unit: item.unit,
@@ -512,6 +527,7 @@ async function addBudgetHistory(
     newStatus?: string;
     snapshotData?: string;
     notes?: string;
+    tenantId?: number; // carimbado a partir do budget pai (evita novos NULLs antes da 3.7.1f)
   }
 ) {
   const db = await getDb();
@@ -522,7 +538,7 @@ async function addBudgetHistory(
 
 // ─── Métricas para o dashboard ─────────────────────────────────────────────
 
-export async function getBudgetMetrics(adminId: number) {
+export async function getBudgetMetrics(tenantId: number) {
   const db = await getDb();
   if (!db) return { pending: 0, finalized: 0, approved: 0, rejected: 0, total: 0 };
 
@@ -532,7 +548,7 @@ export async function getBudgetMetrics(adminId: number) {
       count: sql<number>`count(*)`,
     })
     .from(budgets)
-    .where(eq(budgets.adminId, adminId))
+    .where(forTenantId(tenantId, budgets))
     .groupBy(budgets.status);
 
   const metrics = { pending: 0, finalized: 0, approved: 0, rejected: 0, total: 0 };
@@ -557,6 +573,18 @@ export async function getBudgetAttachments(budgetId: number) {
     .from(budgetAttachments)
     .where(eq(budgetAttachments.budgetId, budgetId))
     .orderBy(budgetAttachments.uploadedAt);
+}
+
+// ISOLADO: usada pela guarda multi-etapa do router (anexo → budgetId → tenant).
+export async function getBudgetAttachmentById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db
+    .select()
+    .from(budgetAttachments)
+    .where(eq(budgetAttachments.id, id))
+    .limit(1);
+  return result[0] ?? null;
 }
 
 export async function createBudgetAttachment(data: InsertBudgetAttachment) {

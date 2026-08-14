@@ -59,7 +59,6 @@ export default function AdminBudgetDetail() {
   const budgetId = matchDetail ? parseInt(params!.id) : null;
   const isNew = matchNew || !budgetId;
 
-  const [adminId] = useState(() => parseInt(localStorage.getItem("adminId") ?? "1"));
   const [adminName] = useState(() => localStorage.getItem("adminName") ?? "Admin");
 
   // ─── Campos do formulário ─────────────────────────────────────────────
@@ -332,7 +331,6 @@ const updateItem = (idx: number, field: keyof BudgetItem, raw: string | number) 
       technicianSignature: techSignature,
       technicianDocument: techDoc || undefined,
       validityDays,
-      adminId,
     });
   };
 

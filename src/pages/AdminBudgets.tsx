@@ -39,10 +39,6 @@ const STATUS_ICON: Record<string, React.ReactNode> = {
 
 export default function AdminBudgets() {
   const [, navigate] = useLocation();
-  const [adminId] = useState(() => {
-    const stored = localStorage.getItem("adminId");
-    return stored ? parseInt(stored) : 1;
-  });
 
   const [searchTerm, setSearchTerm] = useState("");
   const debouncedSearch = useDebounce(searchTerm, 500);
@@ -55,7 +51,6 @@ export default function AdminBudgets() {
   const [deleteSingleId, setDeleteSingleId] = useState<number | null>(null);
 
   const { data, isLoading, refetch } = trpc.budgets.list.useQuery({
-    adminId,
     page,
     limit: pageSize,
     search: debouncedSearch,
@@ -68,7 +63,7 @@ export default function AdminBudgets() {
   const totalCount = data?.totalCount ?? 0;
   const totalPages = Math.ceil(totalCount / pageSize);
 
-  const { data: metrics } = trpc.budgets.getMetrics.useQuery({ adminId });
+  const { data: metrics } = trpc.budgets.getMetrics.useQuery();
 
   const deleteMutation = trpc.budgets.delete.useMutation({
     onSuccess: () => {

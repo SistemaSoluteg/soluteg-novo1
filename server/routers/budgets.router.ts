@@ -1,15 +1,16 @@
 import * as db from "../db";
 import { sendWhatsappAlert, sendWhatsappAlertWithPDF, sendWhatsappToNumberWithPDF } from "../whatsapp";
 import { adminLocalProcedure, protectedClientProcedure, publicProcedure, router } from "../_core/trpc";
+import { withTenant } from "../_core/tenant";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { notify } from "../lib/notifications";
 
 
 export const budgetsRouter = router({
+  // ISOLADO: lista por tenant (regra 5.3 — adminId nunca vem do input).
   list: adminLocalProcedure
     .input(z.object({
-      adminId: z.number().optional(),
       clientId: z.number().optional(),
       status: z.enum(["pendente", "finalizado", "aprovado", "reprovado"]).optional(),
       search: z.string().optional(),
@@ -18,18 +19,25 @@ export const budgetsRouter = router({
       sortBy: z.string().default("createdAt"),
       sortOrder: z.enum(["asc", "desc"]).default("desc"),
     }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const budgetsDb = await import("../budgetsDb");
-      return await budgetsDb.listBudgets(input);
+      return await budgetsDb.listBudgets({ ...input, tenantId: ctx.tenantId });
     }),
 
-  getById: adminLocalProcedure
+  getById: adminLocalProcedure // ISOLADO COM GUARDA
     .input(z.object({ id: z.number() }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const budgetsDb = await import("../budgetsDb");
-      return await budgetsDb.getBudgetById(input.id);
+      const budget = await budgetsDb.getBudgetById(input.id);
+      if (!budget || budget.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Orçamento não encontrado" });
+      }
+      return budget;
     }),
 
+  // GLOBAL POR DESIGN: página pública de aprovação (/orcamento/:token), sem admin logado
+  // e sem ctx.tenantId. O token opaco (64 hex chars, crypto.randomBytes) é a credencial —
+  // NÃO adicionar guarda de tenantId aqui, quebraria a aprovação em produção.
   getByToken: publicProcedure
     .input(z.object({ token: z.string() }))
     .query(async ({ input }) => {
@@ -53,9 +61,19 @@ export const budgetsRouter = router({
     }))
     .mutation(async ({ input, ctx }) => {
       const budgetsDb = await import("../budgetsDb");
-      const result = await budgetsDb.createBudget({ ...input, adminId: ctx.adminId } as any);
 
+      // GUARDA: o cliente do orçamento precisa pertencer ao tenant do admin logado.
+      // ANTES: sem checagem — dava pra criar orçamento no tenant 1 referenciando
+      // clientId de outro tenant, vazando nome/telefone desse cliente no PDF e no Zap.
       const cliente = await db.getClientById(input.clientId);
+      if (!cliente || cliente.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Cliente não encontrado" });
+      }
+
+      const result = await budgetsDb.createBudget(
+        withTenant(ctx, { ...input, adminId: ctx.adminId }) as any
+      );
+
       const nomeCliente = cliente?.name || `ID ${input.clientId}`;
       const adminUrl = `https://app.soluteg.com.br/gestor/orcamentos/${result.id}`;
       const msg =
@@ -88,6 +106,13 @@ export const budgetsRouter = router({
       // changedBy vem do JWT (ctx.adminId), não do frontend (MED-04)
       const budgetsDb = await import("../budgetsDb");
       const { id, saveSnapshot, ...data } = input;
+
+      // GUARDA: orçamento precisa pertencer ao tenant do admin logado.
+      const existing = await budgetsDb.getBudgetById(id);
+      if (!existing || existing.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Orçamento não encontrado" });
+      }
+
       await budgetsDb.updateBudget(id, data as any, String(ctx.adminId), saveSnapshot);
       return { success: true, message: "Orçamento atualizado com sucesso" };
     }),
@@ -104,9 +129,16 @@ export const budgetsRouter = router({
         orderIndex: z.number(),
       })),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const budgetsDb = await import("../budgetsDb");
-      await budgetsDb.upsertBudgetItems(input.budgetId, input.items);
+
+      // GUARDA: orçamento (pai dos itens) precisa pertencer ao tenant do admin logado.
+      const budget = await budgetsDb.getBudgetById(input.budgetId);
+      if (!budget || budget.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Orçamento não encontrado" });
+      }
+
+      await budgetsDb.upsertBudgetItems(input.budgetId, ctx.tenantId, input.items);
       const itemsTotal = await budgetsDb.getTotalItemsValue(input.budgetId);
       // Mão de obra agora é um item na lista — totalValue = soma dos itens diretamente
       await budgetsDb.updateBudget(input.budgetId, { totalValue: itemsTotal }, "system");
@@ -116,12 +148,19 @@ export const budgetsRouter = router({
   // Listar itens — somente admin. Use getItemsByToken para acesso público (página de aprovação).
   getItems: adminLocalProcedure
     .input(z.object({ budgetId: z.number() }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const budgetsDb = await import("../budgetsDb");
+
+      // GUARDA: orçamento (pai dos itens) precisa pertencer ao tenant do admin logado.
+      const budget = await budgetsDb.getBudgetById(input.budgetId);
+      if (!budget || budget.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Orçamento não encontrado" });
+      }
+
       return await budgetsDb.getBudgetItems(input.budgetId);
     }),
 
-  // Listar itens via token público — usado na página de aprovação do cliente (/orcamento/:token)
+  // GLOBAL POR DESIGN: página pública de aprovação, token opaco é a credencial (ver getByToken).
   getItemsByToken: publicProcedure
     .input(z.object({ token: z.string().min(10) }))
     .query(async ({ input }) => {
@@ -138,12 +177,19 @@ export const budgetsRouter = router({
       technicianSignature: z.string().min(1),
       technicianDocument: z.string().optional(),
       validityDays: z.number().default(30),
-      adminId: z.number(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const budgetsDb = await import("../budgetsDb");
-      const { id, technicianName, technicianSignature, technicianDocument, validityDays, adminId } = input;
-      const result = await budgetsDb.finalizeBudget(id, technicianName, technicianSignature, technicianDocument, validityDays, String(adminId));
+      const { id, technicianName, technicianSignature, technicianDocument, validityDays } = input;
+
+      // GUARDA: orçamento precisa pertencer ao tenant do admin logado.
+      const existing = await budgetsDb.getBudgetById(id);
+      if (!existing || existing.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Orçamento não encontrado" });
+      }
+
+      // changedBy vem do JWT (ctx.adminId), não do frontend — antes vinha de input.adminId.
+      const result = await budgetsDb.finalizeBudget(id, technicianName, technicianSignature, technicianDocument, validityDays, String(ctx.adminId));
 
       const budget = await budgetsDb.getBudgetById(id);
       if (budget) {
@@ -183,8 +229,9 @@ export const budgetsRouter = router({
       return { success: true, token: result.token, validUntil: result.validUntil };
     }),
 
-  // Aprovar orçamento — aceita token opaco (do link enviado ao cliente), não ID sequencial.
-  // changedByType sempre "client" pois este endpoint é da página pública de aprovação.
+  // GLOBAL POR DESIGN: aprovar orçamento via token opaco (do link enviado ao cliente),
+  // não ID sequencial. changedByType sempre "client". Sem ctx.tenantId (não há admin
+  // logado) — o tenantId da OS gerada vem do próprio `budget.tenantId` carregado pelo token.
   approve: publicProcedure
     .input(z.object({
       token: z.string().min(10),           // token do link de aprovação (/orcamento/:token)
@@ -254,7 +301,7 @@ export const budgetsRouter = router({
       return { success: true, osId };
     }),
 
-  // Reprovar orçamento — aceita token opaco. changedByType sempre "client" (página pública).
+  // GLOBAL POR DESIGN: reprovar orçamento via token opaco. changedByType sempre "client".
   reject: publicProcedure
     .input(z.object({
       token: z.string().min(10),
@@ -280,41 +327,67 @@ export const budgetsRouter = router({
     .mutation(async ({ input, ctx }) => {
       const budgetsDb = await import("../budgetsDb");
       const budget = await budgetsDb.getBudgetById(input.id);
-      if (!budget) throw new TRPCError({ code: "NOT_FOUND", message: "Orçamento não encontrado" });
+      // GUARDA: já checava existência; agora também checa tenant.
+      if (!budget || budget.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Orçamento não encontrado" });
+      }
       await budgetsDb.rejectBudget(budget.id, input.rejectionReason, `admin-${ctx.adminId}`, "admin");
       return { success: true, message: "Orçamento reprovado" };
     }),
 
   getHistory: adminLocalProcedure
     .input(z.object({ budgetId: z.number() }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const budgetsDb = await import("../budgetsDb");
+
+      // GUARDA: orçamento (pai do histórico) precisa pertencer ao tenant do admin logado.
+      const budget = await budgetsDb.getBudgetById(input.budgetId);
+      if (!budget || budget.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Orçamento não encontrado" });
+      }
+
       return await budgetsDb.getBudgetHistory(input.budgetId);
     }),
 
+  // ISOLADO: métricas por tenant (regra 5.3 — adminId nunca vem do input;
+  // antes vazava métricas cross-tenant pra qualquer admin que soubesse o adminId de outro).
   getMetrics: adminLocalProcedure
-    .input(z.object({ adminId: z.number() }))
-    .query(async ({ input }) => {
+    .query(async ({ ctx }) => {
       const budgetsDb = await import("../budgetsDb");
-      return await budgetsDb.getBudgetMetrics(input.adminId);
+      return await budgetsDb.getBudgetMetrics(ctx.tenantId);
     }),
 
-  delete: adminLocalProcedure
+  delete: adminLocalProcedure // ISOLADO COM GUARDA
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const budgetsDb = await import("../budgetsDb");
+
+      // GUARDA: ANTES não havia checagem nenhuma — qualquer admin logado deletava
+      // qualquer orçamento por ID, de qualquer tenant (IDOR).
+      const budget = await budgetsDb.getBudgetById(input.id);
+      if (!budget || budget.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Orçamento não encontrado" });
+      }
+
       await budgetsDb.deleteBudget(input.id);
       return { success: true, message: "Orçamento deletado com sucesso" };
     }),
 
   // Exportar PDF \u2014 somente admin. Use exportPDFByToken para a p\u00E1gina p\u00FAblica de aprova\u00E7\u00E3o.
-  exportPDF: adminLocalProcedure
+  exportPDF: adminLocalProcedure // ISOLADO COM GUARDA
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      const budgetsDb = await import("../budgetsDb");
+
+      // GUARDA: checar posse ANTES de gerar o PDF (antes, o PDF era gerado
+      // direto pelo ID sem checagem nenhuma).
+      const budget = await budgetsDb.getBudgetById(input.id);
+      if (!budget || budget.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Or\u00E7amento n\u00E3o encontrado" });
+      }
+
       const pdfGen = await import("../pdfGenerator");
       const pdfBuffer = await pdfGen.generateBudgetPDF(input.id);
-      const budgetsDb = await import("../budgetsDb");
-      const budget = await budgetsDb.getBudgetById(input.id);
       const num = budget?.budgetNumber || `ORC-${input.id}`;
       const clientSlug = budget?.clientName
         ? budget.clientName.trim().replace(/[^\w\u00C0-\u00FF]/g, '_').replace(/_+/g, '_').substring(0, 40)
@@ -327,6 +400,7 @@ export const budgetsRouter = router({
     }),
 
   // Exportar PDF via token \u2014 usado na p\u00E1gina p\u00FAblica de aprova\u00E7\u00E3o (/orcamento/:token)
+  // GLOBAL POR DESIGN: página pública de aprovação, token opaco é a credencial (ver getByToken).
   exportPDFByToken: publicProcedure
     .input(z.object({ token: z.string().min(10) }))
     .mutation(async ({ input }) => {
@@ -345,15 +419,14 @@ export const budgetsRouter = router({
       };
     }),
 
-  generateOs: adminLocalProcedure
+  generateOs: adminLocalProcedure // ISOLADO COM GUARDA (já existia antes do resto do router)
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input, ctx }) => {
       const budgetsDb = await import("../budgetsDb");
       const budget = await budgetsDb.getBudgetById(input.id);
-      if (!budget) throw new TRPCError({ code: "NOT_FOUND", message: "Orçamento não encontrado" });
-      // budgets.router.ts ainda não foi isolado por tenant (candidato a próxima sub-fase);
-      // esta checagem pontual evita que uma OS nasça a partir de um orçamento de outro tenant.
-      if (budget.tenantId !== ctx.tenantId) throw new TRPCError({ code: "NOT_FOUND", message: "Orçamento não encontrado" });
+      if (!budget || budget.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Orçamento não encontrado" });
+      }
       if (budget.status !== "aprovado") throw new TRPCError({ code: "BAD_REQUEST", message: "Orçamento precisa estar aprovado" });
 
       const workOrdersDb = await import("../workOrdersDb");
@@ -396,19 +469,29 @@ export const budgetsRouter = router({
       return { success: true, osId: osResult.id };
     }),
 
-  shareToPortal: adminLocalProcedure
+  shareToPortal: adminLocalProcedure // ISOLADO COM GUARDA
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const budgetsDb = await import("../budgetsDb");
+
+      // GUARDA: ANTES não havia checagem nenhuma — qualquer admin logado compartilhava
+      // qualquer orçamento por ID no portal, de qualquer tenant (IDOR).
+      const budget = await budgetsDb.getBudgetById(input.id);
+      if (!budget || budget.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Orçamento não encontrado" });
+      }
+
       await budgetsDb.updateBudget(input.id, { sharedWithPortal: 1 }, "admin");
       return { success: true };
     }),
 
   // Orçamentos visíveis no portal do cliente — usa ctx.clientId do JWT, sem ID no input.
+  // Já era seguro (um cliente pertence a um único tenant); tenantId passado defensivamente.
   getForPortal: protectedClientProcedure
     .query(async ({ ctx }) => {
       const budgetsDb = await import("../budgetsDb");
       return await budgetsDb.listBudgets({
+        tenantId: ctx.tenantId,
         clientId: ctx.clientId,
         sortBy: "createdAt",
         sortOrder: "desc",
@@ -416,15 +499,17 @@ export const budgetsRouter = router({
       });
     }),
 
-  sendWhatsappBudget: adminLocalProcedure
+  sendWhatsappBudget: adminLocalProcedure // ISOLADO COM GUARDA
     .input(z.object({
       id: z.number(),
       target: z.enum(["admin", "client"]),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const budgetsDb = await import("../budgetsDb");
       const budget = await budgetsDb.getBudgetById(input.id);
-      if (!budget) throw new TRPCError({ code: "NOT_FOUND", message: "Orçamento não encontrado" });
+      if (!budget || budget.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Orçamento não encontrado" });
+      }
 
       const pdfGen = await import("../pdfGenerator");
       const pdfBuffer = await pdfGen.generateBudgetPDF(input.id);
@@ -462,14 +547,22 @@ export const budgetsRouter = router({
 
   // ==================== ATTACHMENTS ====================
   attachments: router({
-    list: adminLocalProcedure
+    list: adminLocalProcedure // ISOLADO COM GUARDA
       .input(z.object({ budgetId: z.number() }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         const budgetsDb = await import("../budgetsDb");
+
+        // GUARDA: orçamento (pai dos anexos) precisa pertencer ao tenant do admin logado.
+        const budget = await budgetsDb.getBudgetById(input.budgetId);
+        if (!budget || budget.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Orçamento não encontrado" });
+        }
+
         return await budgetsDb.getBudgetAttachments(input.budgetId);
       }),
 
-    // Pública: usada na página de aprovação — exige token válido para evitar enumeração por ID
+    // GLOBAL POR DESIGN: página pública de aprovação, token opaco é a credencial (ver getByToken).
+    // "Pública: usada na página de aprovação — exige token válido para evitar enumeração por ID"
     listByToken: publicProcedure
       .input(z.object({ token: z.string().min(10) }))
       .query(async ({ input }) => {
@@ -479,7 +572,7 @@ export const budgetsRouter = router({
         return await budgetsDb.getBudgetAttachments(budget.id);
       }),
 
-    create: adminLocalProcedure
+    create: adminLocalProcedure // ISOLADO COM GUARDA
       .input(z.object({
         budgetId:   z.number(),
         fileName:   z.string().min(1),
@@ -490,27 +583,63 @@ export const budgetsRouter = router({
         caption:    z.string().optional(),
         uploadedBy: z.string().optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const budgetsDb = await import("../budgetsDb");
-        await budgetsDb.createBudgetAttachment(input as any);
+
+        // GUARDA: orçamento (pai do anexo) precisa pertencer ao tenant do admin logado.
+        const budget = await budgetsDb.getBudgetById(input.budgetId);
+        if (!budget || budget.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Orçamento não encontrado" });
+        }
+
+        // carimba tenantId no anexo (evita novos NULLs antes da 3.7.1f)
+        await budgetsDb.createBudgetAttachment({ ...input, tenantId: ctx.tenantId } as any);
         return { success: true };
       }),
 
+    /*
+     * GUARDA MULTI-ETAPA (o anexo só chega com o próprio `id`, sem budgetId no input):
+     * 1. busca o anexo para achar o budgetId dono;
+     * 2. busca o orçamento para checar o tenantId.
+     * ANTES: sem nenhuma checagem de posse — qualquer admin logado podia editar/remover
+     * anexo de qualquer orçamento, de qualquer tenant, só sabendo o ID.
+     */
     updateCaption: adminLocalProcedure
       .input(z.object({
         id:      z.number(),
         caption: z.string(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const budgetsDb = await import("../budgetsDb");
+
+        const attachment = await budgetsDb.getBudgetAttachmentById(input.id);
+        if (!attachment) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Anexo não encontrado" });
+        }
+        const budget = await budgetsDb.getBudgetById(attachment.budgetId);
+        if (!budget || budget.tenantId !== ctx.tenantId) {
+          // NOT_FOUND (não FORBIDDEN) para não vazar a existência do anexo em outro tenant.
+          throw new TRPCError({ code: "NOT_FOUND", message: "Anexo não encontrado" });
+        }
+
         await budgetsDb.updateBudgetAttachmentCaption(input.id, input.caption);
         return { success: true };
       }),
 
-    delete: adminLocalProcedure
+    delete: adminLocalProcedure // GUARDA MULTI-ETAPA — ver comentário em updateCaption
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const budgetsDb = await import("../budgetsDb");
+
+        const attachment = await budgetsDb.getBudgetAttachmentById(input.id);
+        if (!attachment) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Anexo não encontrado" });
+        }
+        const budget = await budgetsDb.getBudgetById(attachment.budgetId);
+        if (!budget || budget.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Anexo não encontrado" });
+        }
+
         await budgetsDb.deleteBudgetAttachment(input.id);
         return { success: true };
       }),
