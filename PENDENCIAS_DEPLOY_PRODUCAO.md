@@ -438,13 +438,17 @@ A sub-fase 3.7.2 é **código** (não ALTER de schema), mas gera duas pendência
    ```sql
    -- Diagnóstico: quantos órfãos, por tabela (repetir para cada tabela operacional com tenantId)
    SELECT COUNT(*) FROM workOrders WHERE tenantId IS NULL;
+   SELECT COUNT(*) FROM inspectionTasks WHERE tenantId IS NULL;
+   SELECT COUNT(*) FROM checklistInstances WHERE tenantId IS NULL;
    -- ... clients, budgets, laudos, etc.
 
    -- Backfill (produção = 100% JNC = tenant 1):
    UPDATE workOrders SET tenantId = 1 WHERE tenantId IS NULL;
+   UPDATE inspectionTasks    SET tenantId = 1 WHERE tenantId IS NULL;
+   UPDATE checklistInstances SET tenantId = 1 WHERE tenantId IS NULL;
    -- ... repetir para as demais tabelas operacionais que acusarem NULL
    ```
-   A `3.7.1f` já prevê "garantir 0 nulls" antes do `ALTER ... NOT NULL` — este item é o lembrete concreto de que a origem dos NULLs é essa janela, não só dados legados.
+   A `3.7.1f` já prevê "garantir 0 nulls" antes do `ALTER ... NOT NULL` — este item é o lembrete concreto de que a origem dos NULLs é essa janela, não só dados legados. **Nota:** no staging (14/08) as tabelas de checklist (`inspectionTasks`, `checklistInstances`) deram **0 órfãos** — mas produção deve checar mesmo assim, pois a janela de exposição depende do momento do deploy.
 
 ---
 

@@ -780,15 +780,37 @@ Com dois routers isolados, a metodologia da 3.7.2 ficou clara o suficiente para 
 - ✅ **Fix de FK contra requisição forjada:** chamada `budgets.create` direta (DevTools) com `clientId` de um cliente semeado no tenant 2 retornou `NOT_FOUND` "Cliente não encontrado" — guarda confirmada na build de staging (`dist/index.js`). `workOrders.create` usa guarda idêntica (mesma classe, coberto por simetria).
 - ✅ Regressão JNC do fluxo completo de orçamento (criar → itens → finalizar → link → aprovar → OS gerada carimbando tenant → PDF).
 
+### 8.12 Sub-fase 3.7.2 — Router `checklists` isolado (14/08/2026)
+
+**Objetivo:** Isolar o router `checklists` (5º router). Estrutura de dados particular: `checklistTemplates` **não tem `tenantId`** (catálogo global compartilhado — "bomba", "gerador"), enquanto `inspectionTasks` e `checklistInstances` têm `tenantId`.
+
+**Modelo de dados (para contexto):** `inspectionTasks` é o contêiner que agrupa os checklists de uma OS — criado **uma vez por OS**, sob demanda, na primeira vez que um checklist é adicionado (título "Checklists de Equipamentos"). Cada `checklistInstance` pendura em uma `inspectionTask` (FK NOT NULL). Uma OS tem no máximo uma `inspectionTask`.
+
+**Entregue (commit `88e4a85`, Método B):**
+- **`templates.*` global por design:** `checklistTemplates` não tem `tenantId` — catálogo compartilhado entre tenants. `templates.list/getById/getBySlug` (admin) e `listTemplates` (technicianPortal) permanecem sem guarda, comentados como "GLOBAL POR DESIGN". `templateId` vindo do input também é global (sem checagem de posse de tenant).
+- **`inspectionTasks.*`:** `listByWorkOrder`/`create` validam posse da OS via `workOrdersDb.getWorkOrderById`; `getById`/`getFull`/`updateStatus`/`complete`/`delete` guardam por `task.tenantId !== ctx.tenantId`. `create` carimba `tenantId`.
+- **`instances.*`:** `create`/`listByTask` validam posse da task pai; `listByWorkOrder` valida via OS; `getById`/`getWithTemplate`/`updateResponses`/`update`/`delete`/`suggestConclusion` guardam por `instance.tenantId`.
+- **`checklistsDb`:** `createInspectionTask` e `createChecklistInstance` passam a exigir `tenantId` + guarda fail-closed (padrão `createWorkOrder`).
+- **3 caminhos de escrita cobertos** (a lição do `workOrders`): `checklists.router` (ctx.tenantId), `technicianPortal.addChecklist` — técnico em campo, já tinha posse via `getWorkOrderByIdForTechnician`, só passou a carimbar `ctx.tenantId` — e `monthlyOsJob` (cron, `client.tenantId`). Em `addEquipmentToMonthlyOs` o fetch do `client` foi movido para antes do `if/else`, pois as criações de checklist rodam nos dois ramos (OS nova e OS já existente), não só quando a OS é criada.
+
+**Validação (staging, 14/08/2026):**
+- ✅ `tsc --noEmit`: 33 erros (baseline, zero novos).
+- ✅ **Ghost-probe:** `inspectionTask` semeada no tenant 2 → `NOT_FOUND` para o admin do JNC (via `checklists.inspectionTasks.getById`, requisição forjada, confirmado na build `dist/index.js`); controle positivo (task do tenant 1) retorna os dados. Templates continuam visíveis (globais).
+- ✅ **Regressão JNC:** criar OS → adicionar checklist → preencher respostas → salvar. (A conclusão da OS com assinatura é do `workOrders`, não do checklist.)
+- ✅ **Backfill:** `SELECT COUNT(*) ... WHERE tenantId IS NULL` deu **0** em `inspectionTasks` e `checklistInstances` no staging — sem órfãos (as duas tabelas foram carimbadas na migração 3.7.1e e nada foi criado na janela sem `tenantId`).
+
+**Código morto identificado (candidato à próxima faxina, não removido agora):** o endpoint `inspectionTasks.complete` (concluir tarefa com assinatura de colaborador) + `completeInspectionTask` do `checklistsDb` **não são chamados por nenhuma parte do frontend** — a assinatura real vive no `workOrders.complete`. O `canComplete` é um stub que sempre retorna `true` (usado só para habilitar um botão). Ficam isolados com guarda por ora; remover numa passada de limpeza dedicada.
+
 ---
 
 ## 9. O que vem pela frente
 
 ### 9.1 Sub-fase 3.7.2 — Escalar Isolamento de Queries *(🟡 EM ANDAMENTO)*
 
-**Escopo:** Aplicar o padrão de isolamento de queries, validado nos pilotos `technicians` (Método A) e `clients`/`workOrders`/`budgets` (Método B), para todos os demais routers da aplicação que lidam com dados operacionais.
+**Escopo:** Aplicar o padrão de isolamento de queries, validado nos pilotos `technicians` (Método A) e `clients`/`workOrders`/`budgets`/`checklists` (Método B), para todos os demais routers da aplicação que lidam com dados operacionais.
 
-- **Estratégia:** Isolar um router por vez, validando cada um com ghost-probe antes de avançar. Feitos: `technicians`, `clients`, `workOrders`, `budgets`. **Próximo: a definir** (candidatos: `technicianPortal`, `checklists`, `documents`, `waterTankAdmin`).
+- **Estratégia:** Isolar um router por vez, validando cada um com ghost-probe antes de avançar. Feitos: `technicians`, `clients`, `workOrders`, `budgets`, `checklists`. **Próximo: a definir** (candidatos: `technicianPortal`, `documents`, `waterTankAdmin`).
+- **Fronteira global (catálogos compartilhados):** `checklistTemplates` não tem `tenantId` — templates ficam globais. Padrão a reaplicar: tabelas de catálogo/referência compartilhadas entre tenants não recebem guarda; comentar como "GLOBAL POR DESIGN".
 - **Padrão de guarda de FK-do-input:** ao isolar um router, além da posse do registro principal, validar **toda foreign key vinda do input** (`clientId`, `technicianId`, etc.) contra o tenant — senão dá pra referenciar registro de outro tenant e vazar PII. Lição incorporada a partir do `budgets`/`workOrders`.
 - **PDV:** As 6 tabelas de PDV (`products`, `sales`, etc.) estão **fora** do escopo, pois a funcionalidade é exclusiva da JNC.
 

@@ -25,7 +25,7 @@
 ## 2. Estado atual (14/08/2026)
 
 ### Em andamento
-**Fase 3.7 — Refactor multi-tenant.** Branch `multi-tenant`. **Sub-fase 3.7.2 (Isolamento de queries) em andamento — 4 routers isolados (`technicians`, `clients`, `workOrders`, `budgets`).**
+**Fase 3.7 — Refactor multi-tenant.** Branch `multi-tenant`. **Sub-fase 3.7.2 (Isolamento de queries) em andamento — 5 routers isolados (`technicians`, `clients`, `workOrders`, `budgets`, `checklists`).**
 
 Dois métodos de isolamento em uso, conforme o router usa helper isolado ou `server/db.ts` compartilhado:
 - **Método A** (`technicians`): filtro direto na query via `forTenantId`/`withTenantId`.
@@ -46,11 +46,12 @@ Cada router isolado é validado com **ghost-probe**: criar um registro sob outro
 - ✅ Sub-fase 3.7.2 (Piloto): Router `technicians` 100% isolado por tenant.
 - ✅ Sub-fase 3.7.2 (Escala, router 2/N): Router `clients` isolado por tenant (commit `91e0403`), incluindo correção de um IDOR pré-existente em `equipment.remove` (sem checagem de posse alguma antes desta mudança). `getClientByUsername` permanece global — é usada pelo login do cliente, que não passa pelo router. Detalhes em [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDOFF.md) seção 8.8.
 - ✅ Fixes de infra descobertos no caminho da 3.7.2: pipeline de deploy do staging corrigido (pm2 apontava pro diretório de produção; `ecosystem.config.cjs` resolveu — `deploy-tst` agora funciona de verdade); tabela `client_equipment` estava ausente no banco de staging (`_tst`), criada — corrigiu bug de equipamento e normalizou upload de documento.
+- ✅ Sub-fase 3.7.2 (Escala, router 5/N): Router `checklists` isolado e **validado em staging** (14/08, commit `88e4a85`). `templates.*` globais por design (`checklistTemplates` sem `tenantId` — catálogo compartilhado); `inspectionTasks`/`checklistInstances` com guarda de posse; `createInspectionTask`/`createChecklistInstance` com `tenantId` obrigatório + fail-closed, cobrindo os 3 caminhos de escrita (router admin, `technicianPortal.addChecklist`, `monthlyOsJob`). Ghost-probe OK, regressão do fluxo admin OK, 0 órfãos no staging. Junto, faxina de código morto (9 arquivos removidos). Detalhes na seção 8.12 do [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDOFF.md).
 - ✅ Sub-fase 3.7.2 (Escala, router 4/N): Router `budgets` isolado e **validado em staging** (14/08, commit `5483c1b`). Guardas de posse em todos os endpoints admin; `delete`/`shareToPortal` (IDOR sem checagem) e `getMetrics` (vazava métricas cross-tenant) fechados; `create` valida posse do `clientId`; anexos com guarda multi-etapa. Procedures do link público de aprovação (`/orcamento/:token`) **globais por design** (token opaco é a credencial). Sub-tabelas carimbam `tenantId`. Junto: fix de FK-do-input no `workOrders` (commit `ddc420e`) — `create`/`update`/`assignTechnician` validam posse de `clientId`/`technicianId`. Ghost-probe + link público + FK forjada validados. Detalhes na seção 8.11 do [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDOFF.md).
 - ✅ Sub-fase 3.7.2 (Escala, router 3/N): Router `workOrders` isolado e **validado em staging** (14/08). Além do router tRPC (Método B + guardas multi-etapa nos sub-routers), foram cobertos: 2 rotas Express legadas (`GET`/`POST /api/work-orders`), 3 caminhos extras de criação de OS (`workOrdersRecurrence`, `budgets.approve`/`generateOs`), e uma **guarda fail-closed** em `workOrdersDb.createWorkOrder` que expôs mais 3 call sites de sistema (`monthlyOsJob` 2x, `waterTankAlertService`) — todos corrigidos. Ghost-probe cross-tenant OK; backfill de 1 OS órfã (`tenantId=NULL`) feita no staging. Sub-router `metrics` adiado (dívida técnica); `GET /api/admin-metrics` sem auth registrado como `SEC-01`. Detalhes na seção 8.10 do [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDOFF.md).
 
 ### Próxima
-**Sub-fase 3.7.2 (Escala, router 5/N):** Isolar o próximo router (a ser definido com Thiago; candidatos: `technicianPortal`, `checklists`, `documents`, `waterTankAdmin`).
+**Sub-fase 3.7.2 (Escala, router 6/N):** Isolar o próximo router (a ser definido com Thiago; candidatos: `technicianPortal`, `documents`, `waterTankAdmin`).
 
 Rito de sempre: prompt para a IA do terminal (Claude Code no VS Code) → revisão do diff com o Thiago → commit + push → `deploy-tst` → validação com ghost-probe. (O deploy puxa via `git pull`, então precisa commitar+pushar antes; a validação em staging acontece depois do commit, na branch `multi-tenant`.)
 
@@ -58,10 +59,11 @@ Rito de sempre: prompt para a IA do terminal (Claude Code no VS Code) → revis�
 - Ao isolar um router, fazer `grep` por **todos** os pontos de escrita da tabela — incluindo chamadas sem prefixo de módulo (`createX(` além de `db.createX(`) e rotas Express fora do tRPC (`app.get/post` em `server/index.ts`) — não só o router. O `tsc` não pega nada disso; a validação real é a revisão do diff + ghost-probe.
 - Validar **toda foreign key vinda do input** (`clientId`, `technicianId`, etc.) contra o tenant, não só a posse do registro principal — senão dá pra referenciar registro de outro tenant e vazar PII (achado no `budgets`/`workOrders`).
 - Identificar os **lookups por token/username que ficam globais por design** (login do cliente, link público de aprovação) e comentá-los explicitamente para ninguém adicionar guarda que quebre o fluxo público.
+- **Catálogos/tabelas de referência compartilhadas ficam globais** (ex.: `checklistTemplates`, sem `tenantId`) — não guardar, comentar como "GLOBAL POR DESIGN".
 
 **Dívidas técnicas anotadas (sem pressa):**
-- `getTechnicianById` tem `tenantId` opcional — vira obrigatório quando `technicianPortal` for isolado (`workOrders`, que também dependia, já foi).
-- Código morto a remover (ex.: `createWorkOrder` órfã em `server/db.ts:694`, sem nenhum import — identificado durante a auditoria).
+- `getTechnicianById` tem `tenantId` opcional — vira obrigatório quando `technicianPortal` for isolado (`workOrders`, que já usa a variante com `tenantId`, e `checklists` já foram).
+- Código morto a remover numa faxina dedicada: `createWorkOrder` órfã em `server/db.ts:694` (sem import); endpoint `checklists.inspectionTasks.complete` + `completeInspectionTask` do `checklistsDb` (não chamados pelo front — assinatura real é do `workOrders.complete`); stub `canComplete` (sempre `true`).
 - `metrics` do `workOrders` e `GET /api/admin-metrics` sem auth (`SEC-01`) — pendências registradas, fora do escopo do isolamento atual.
 - `3.7.1f` (NOT NULL + FKs + índices) só entra depois que **todos** os routers estiverem isolados — e precisa de um backfill final de `tenantId IS NULL` antes de travar (novos NULLs podem surgir enquanto nem todo caminho de escrita tiver a guarda).
 
