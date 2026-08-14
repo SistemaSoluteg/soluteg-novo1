@@ -157,7 +157,7 @@ export default function AdminWaterTankDashboard() {
   );
 
   const { data: workOrdersResp } = trpc.workOrders.list.useQuery(
-    { adminId: adminId ?? 0, clientId: data?.sensor?.clientId, status: "aberta", limit: 50 },
+    { clientId: data?.sensor?.clientId, status: "aberta", limit: 50 },
     { enabled: !!adminId && !!data?.sensor?.clientId },
   );
   const workOrdersList = (workOrdersResp as any)?.items ?? [];

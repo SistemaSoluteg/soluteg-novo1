@@ -1,6 +1,7 @@
 import * as db from "../db";
 import { sendWhatsappAlert } from "../whatsapp";
 import { adminLocalProcedure, protectedClientProcedure, router } from "../_core/trpc";
+import { withTenant } from "../_core/tenant";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { notify } from "../lib/notifications";
@@ -9,7 +10,6 @@ export const workOrdersRouter = router({
   list: adminLocalProcedure
     .input(z.object({
       clientId: z.number().optional(),
-      adminId: z.number().optional(),
       type: z.enum(["rotina", "emergencial", "instalacao", "manutencao", "corretiva", "preventiva"]).optional(),
       status: z.string().optional(),
       priority: z.string().optional(),
@@ -18,22 +18,28 @@ export const workOrdersRouter = router({
       limit: z.number().default(10),
       sortBy: z.string().default("createdAt"),
       sortOrder: z.enum(["asc", "desc"]).default("desc"),
-    }))
-    .query(async ({ input }) => {
+    })) // ISOLADO
+    .query(async ({ input, ctx }) => {
       const workOrdersDb = await import("../workOrdersDb");
-      return await workOrdersDb.listWorkOrders(input);
+      return await workOrdersDb.listWorkOrders({
+        ...input,
+        tenantId: ctx.tenantId,
+      });
     }),
 
-  getById: adminLocalProcedure
+  getById: adminLocalProcedure // ISOLADO COM GUARDA
     .input(z.object({ id: z.number() }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const workOrdersDb = await import("../workOrdersDb");
-      return await workOrdersDb.getWorkOrderById(input.id);
+      const wo = await workOrdersDb.getWorkOrderById(input.id);
+      if (!wo || wo.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+      }
+      return wo;
     }),
 
   create: adminLocalProcedure
     .input(z.object({
-      adminId: z.number(),
       clientId: z.number(),
       type: z.enum(["rotina", "emergencial", "instalacao", "manutencao", "corretiva", "preventiva"]),
       priority: z.enum(["normal", "alta", "critica"]).default("normal"),
@@ -48,14 +54,18 @@ export const workOrdersRouter = router({
       recurrenceDay: z.number().optional(),
       technicianId: z.number().nullable().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const workOrdersDb = await import("../workOrdersDb");
-      const convertedInput = {
+      const dataToCreate = withTenant(ctx, {
         ...input,
+        adminId: ctx.adminId,
         scheduledDate: input.scheduledDate ? new Date(input.scheduledDate) : undefined,
-      };
+      });
 
-      const result = await workOrdersDb.createWorkOrder(convertedInput as any) as any;
+      // O tipo `any` é necessário aqui porque `withTenant` adiciona `tenantId` que
+      // a função `createWorkOrder` não espera explicitamente, mas o Drizzle
+      // o insere corretamente no banco de dados.
+      const result = await workOrdersDb.createWorkOrder(dataToCreate as any) as any;
       const osId = result?.insertId || result?.id || (Array.isArray(result) ? result[0] : result);
 
       console.log(`--- DEBUG JNC: OS criada com ID ${osId} ---`);
@@ -133,8 +143,15 @@ export const workOrdersRouter = router({
       cancellationReason: z.string().optional(),
       technicianId: z.number().nullable().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const workOrdersDb = await import("../workOrdersDb");
+
+      // GUARDA: OS precisa pertencer ao tenant do admin logado.
+      const existing = await workOrdersDb.getWorkOrderById(input.id);
+      if (!existing || existing.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+      }
+
       const { id, ...data } = input;
       const convertedData = {
         ...data,
@@ -143,6 +160,7 @@ export const workOrdersRouter = router({
       await workOrdersDb.updateWorkOrder(id, convertedData as any);
 
       // Notifica o técnico sobre a alteração (se a OS tiver técnico atribuído)
+      // A busca aqui é segura pois a guarda já foi feita.
       const osAtualizada = await workOrdersDb.getWorkOrderById(id);
       if (osAtualizada?.technicianId) {
         const technicianDb = await import("../technicianDb");
@@ -179,8 +197,15 @@ export const workOrdersRouter = router({
       notes: z.string().optional(),
     }))
     .mutation(async ({ input, ctx }) => {
-      // changedBy e changedByType vêm do JWT, não do frontend (MED-04)
       const workOrdersDb = await import("../workOrdersDb");
+
+      // GUARDA: OS precisa pertencer ao tenant do admin logado.
+      const existing = await workOrdersDb.getWorkOrderById(input.id);
+      if (!existing || existing.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+      }
+
+      // changedBy e changedByType vêm do JWT, não do frontend
       await workOrdersDb.updateWorkOrderStatus(
         input.id,
         input.newStatus,
@@ -193,8 +218,15 @@ export const workOrdersRouter = router({
 
   getHistory: adminLocalProcedure
     .input(z.object({ workOrderId: z.number() }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const workOrdersDb = await import("../workOrdersDb");
+
+      // GUARDA: OS precisa pertencer ao tenant do admin logado.
+      const existing = await workOrdersDb.getWorkOrderById(input.workOrderId);
+      if (!existing || existing.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Histórico não encontrado" });
+      }
+
       return await workOrdersDb.getWorkOrderHistory(input.workOrderId);
     }),
 
@@ -203,8 +235,15 @@ export const workOrdersRouter = router({
       workOrderId: z.number(),
       technicianId: z.number().nullable(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const workOrdersDb = await import("../workOrdersDb");
+
+      // GUARDA: OS precisa pertencer ao tenant do admin logado.
+      const existing = await workOrdersDb.getWorkOrderById(input.workOrderId);
+      if (!existing || existing.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+      }
+
       await workOrdersDb.assignTechnicianToWorkOrder(input.workOrderId, input.technicianId);
 
       // Notifica o técnico recém-atribuído (se algum foi passado)
@@ -247,24 +286,45 @@ export const workOrdersRouter = router({
 
   delete: adminLocalProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const workOrdersDb = await import("../workOrdersDb");
+
+      // GUARDA: OS precisa pertencer ao tenant do admin logado.
+      const existing = await workOrdersDb.getWorkOrderById(input.id);
+      if (!existing || existing.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+      }
+
       await workOrdersDb.deleteWorkOrder(input.id);
       return { success: true, message: "OS deletada com sucesso" };
     }),
 
   deleteBatch: adminLocalProcedure
     .input(z.object({ ids: z.array(z.number()).min(1).max(100) }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const workOrdersDb = await import("../workOrdersDb");
+
+      // GUARDA: Todas as OSs precisam pertencer ao tenant do admin logado.
+      const checks = await Promise.all(input.ids.map(id => workOrdersDb.getWorkOrderById(id)));
+      if (checks.some(wo => !wo || wo.tenantId !== ctx.tenantId)) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Uma ou mais Ordens de Serviço não foram encontradas ou não pertencem ao seu tenant." });
+      }
+
       await workOrdersDb.deleteMultipleWorkOrders(input.ids);
       return { success: true, message: `${input.ids.length} OS deletadas com sucesso` };
     }),
 
   complete: adminLocalProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const workOrdersDb = await import("../workOrdersDb");
+
+      // GUARDA: OS precisa pertencer ao tenant do admin logado.
+      const existing = await workOrdersDb.getWorkOrderById(input.id);
+      if (!existing || existing.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+      }
+
       await workOrdersDb.updateWorkOrder(input.id, {
         status: "concluida" as const,
         completedAt: new Date(),
@@ -280,8 +340,15 @@ export const workOrdersRouter = router({
       clientName: z.string().optional(),
       clientSignature: z.string().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const workOrdersDb = await import("../workOrdersDb");
+
+      // GUARDA: OS precisa pertencer ao tenant do admin logado.
+      const existing = await workOrdersDb.getWorkOrderById(input.id);
+      if (!existing || existing.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+      }
+
       const { id, collaboratorName, collaboratorSignature, clientName, clientSignature } = input;
       const updateData: Partial<any> = {};
       if (collaboratorName)    updateData.collaboratorName    = collaboratorName;
@@ -299,8 +366,15 @@ export const workOrdersRouter = router({
       id: z.number(),
       cancelFuture: z.boolean(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const workOrdersDb = await import("../workOrdersDb");
+
+      // GUARDA: OS precisa pertencer ao tenant do admin logado.
+      const existing = await workOrdersDb.getWorkOrderById(input.id);
+      if (!existing || existing.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+      }
+
       if (input.cancelFuture) {
         await workOrdersDb.updateWorkOrder(input.id, { recurrenceCanceled: 1 });
       }
@@ -312,8 +386,16 @@ export const workOrdersRouter = router({
   tasks: router({
     list: adminLocalProcedure
       .input(z.object({ workOrderId: z.number() }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         const auxDb = await import("../workOrdersAuxDb");
+
+        // GUARDA: OS precisa pertencer ao tenant do admin logado.
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(input.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+        }
+
         return await auxDb.getTasksByWorkOrderId(input.workOrderId);
       }),
 
@@ -324,8 +406,16 @@ export const workOrdersRouter = router({
         description: z.string().optional(),
         orderIndex: z.number().default(0),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const auxDb = await import("../workOrdersAuxDb");
+
+        // GUARDA: OS precisa pertencer ao tenant do admin logado.
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(input.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+        }
+
         await auxDb.createTask(input);
         return { success: true, message: "Tarefa criada com sucesso" };
       }),
@@ -337,8 +427,20 @@ export const workOrdersRouter = router({
         description: z.string().optional(),
         orderIndex: z.number().optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const auxDb = await import("../workOrdersAuxDb");
+
+        // GUARDA MULTI-ETAPA: a tarefa deve pertencer a uma OS do tenant.
+        const task = await auxDb.getTaskById(input.id);
+        if (!task) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Tarefa não encontrada" });
+        }
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(task.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Tarefa não encontrada" });
+        }
+
         const { id, ...updates } = input;
         await auxDb.updateTask(id, updates);
         return { success: true, message: "Tarefa atualizada com sucesso" };
@@ -350,8 +452,20 @@ export const workOrdersRouter = router({
         isCompleted: z.boolean(),
         completedBy: z.string().optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const auxDb = await import("../workOrdersAuxDb");
+
+        // GUARDA MULTI-ETAPA: a tarefa deve pertencer a uma OS do tenant.
+        const task = await auxDb.getTaskById(input.id);
+        if (!task) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Tarefa não encontrada" });
+        }
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(task.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Tarefa não encontrada" });
+        }
+
         await auxDb.toggleTaskCompletion(input.id, input.isCompleted, input.completedBy);
         return { success: true, message: "Tarefa atualizada com sucesso" };
       }),
@@ -362,16 +476,40 @@ export const workOrdersRouter = router({
         status: z.number().min(0).max(2),
         completedBy: z.string().optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const auxDb = await import("../workOrdersAuxDb");
+
+        // GUARDA MULTI-ETAPA: a tarefa deve pertencer a uma OS do tenant.
+        const task = await auxDb.getTaskById(input.id);
+        if (!task) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Tarefa não encontrada" });
+        }
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(task.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Tarefa não encontrada" });
+        }
+
         await auxDb.setTaskStatus(input.id, input.status, input.completedBy);
         return { success: true };
       }),
 
     delete: adminLocalProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const auxDb = await import("../workOrdersAuxDb");
+
+        // GUARDA MULTI-ETAPA: a tarefa deve pertencer a uma OS do tenant.
+        const task = await auxDb.getTaskById(input.id);
+        if (!task) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Tarefa não encontrada" });
+        }
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(task.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Tarefa não encontrada" });
+        }
+
         await auxDb.deleteTask(input.id);
         return { success: true, message: "Tarefa deletada com sucesso" };
       }),
@@ -381,8 +519,16 @@ export const workOrdersRouter = router({
   materials: router({
     list: adminLocalProcedure
       .input(z.object({ workOrderId: z.number() }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         const auxDb = await import("../workOrdersAuxDb");
+
+        // GUARDA: OS precisa pertencer ao tenant do admin logado.
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(input.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+        }
+
         return await auxDb.getMaterialsByWorkOrderId(input.workOrderId);
       }),
 
@@ -396,8 +542,16 @@ export const workOrdersRouter = router({
         totalCost: z.number().optional(),
         addedBy: z.string().optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const auxDb = await import("../workOrdersAuxDb");
+
+        // GUARDA: OS precisa pertencer ao tenant do admin logado.
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(input.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+        }
+
         await auxDb.createMaterial(input);
         return { success: true, message: "Material adicionado com sucesso" };
       }),
@@ -411,8 +565,20 @@ export const workOrdersRouter = router({
         unitCost: z.number().optional(),
         totalCost: z.number().optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const auxDb = await import("../workOrdersAuxDb");
+
+        // GUARDA MULTI-ETAPA: o material deve pertencer a uma OS do tenant.
+        const material = await auxDb.getMaterialById(input.id);
+        if (!material) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Material não encontrado" });
+        }
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(material.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Material não encontrado" });
+        }
+
         const { id, ...updates } = input;
         await auxDb.updateMaterial(id, updates);
         return { success: true, message: "Material atualizado com sucesso" };
@@ -420,16 +586,36 @@ export const workOrdersRouter = router({
 
     delete: adminLocalProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const auxDb = await import("../workOrdersAuxDb");
+
+        // GUARDA MULTI-ETAPA: o material deve pertencer a uma OS do tenant.
+        const material = await auxDb.getMaterialById(input.id);
+        if (!material) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Material não encontrado" });
+        }
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(material.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Material não encontrado" });
+        }
+
         await auxDb.deleteMaterial(input.id);
         return { success: true, message: "Material deletado com sucesso" };
       }),
 
     getTotalCost: adminLocalProcedure
       .input(z.object({ workOrderId: z.number() }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         const auxDb = await import("../workOrdersAuxDb");
+
+        // GUARDA: OS precisa pertencer ao tenant do admin logado.
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(input.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+        }
+
         return await auxDb.getTotalMaterialsCost(input.workOrderId);
       }),
   }),
@@ -441,8 +627,16 @@ export const workOrdersRouter = router({
         workOrderId: z.number(),
         category: z.enum(["before", "during", "after", "document", "other"]).optional(),
       }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         const auxDb = await import("../workOrdersAuxDb");
+
+        // GUARDA: OS precisa pertencer ao tenant do admin logado.
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(input.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+        }
+
         if (input.category) {
           return await auxDb.getAttachmentsByCategory(input.workOrderId, input.category);
         }
@@ -461,8 +655,16 @@ export const workOrdersRouter = router({
         uploadedBy: z.string().optional(),
         description: z.string().optional(), // legenda/caption da foto
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const auxDb = await import("../workOrdersAuxDb");
+
+        // GUARDA: OS precisa pertencer ao tenant do admin logado.
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(input.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+        }
+
         await auxDb.createAttachment(input);
         return { success: true, message: "Anexo adicionado com sucesso" };
       }),
@@ -472,8 +674,20 @@ export const workOrdersRouter = router({
         id: z.number(),
         description: z.string().optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const auxDb = await import("../workOrdersAuxDb");
+
+        // GUARDA MULTI-ETAPA: o anexo deve pertencer a uma OS do tenant.
+        const attachment = await auxDb.getAttachmentById(input.id);
+        if (!attachment) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Anexo não encontrado" });
+        }
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(attachment.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Anexo não encontrado" });
+        }
+
         const { id, description } = input;
         await auxDb.updateAttachment(id, { description });
         return { success: true, message: "Legenda atualizada com sucesso" };
@@ -481,8 +695,20 @@ export const workOrdersRouter = router({
 
     delete: adminLocalProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const auxDb = await import("../workOrdersAuxDb");
+
+        // GUARDA MULTI-ETAPA: o anexo deve pertencer a uma OS do tenant.
+        const attachment = await auxDb.getAttachmentById(input.id);
+        if (!attachment) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Anexo não encontrado" });
+        }
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(attachment.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Anexo não encontrado" });
+        }
+
         await auxDb.deleteAttachment(input.id);
         return { success: true, message: "Anexo deletado com sucesso" };
       }),
@@ -495,8 +721,16 @@ export const workOrdersRouter = router({
         workOrderId: z.number(),
         includeInternal: z.boolean().default(true),
       }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         const auxDb = await import("../workOrdersAuxDb");
+
+        // GUARDA: OS precisa pertencer ao tenant do admin logado.
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(input.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+        }
+
         return await auxDb.getCommentsByWorkOrderId(input.workOrderId, input.includeInternal);
       }),
 
@@ -508,16 +742,36 @@ export const workOrdersRouter = router({
         comment: z.string().min(1),
         isInternal: z.number().default(1),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const auxDb = await import("../workOrdersAuxDb");
+
+        // GUARDA: OS precisa pertencer ao tenant do admin logado.
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(input.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+        }
+
         await auxDb.createComment(input);
         return { success: true, message: "Comentário adicionado com sucesso" };
       }),
 
     delete: adminLocalProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const auxDb = await import("../workOrdersAuxDb");
+
+        // GUARDA MULTI-ETAPA: o comentário deve pertencer a uma OS do tenant.
+        const comment = await auxDb.getCommentById(input.id);
+        if (!comment) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Comentário não encontrado" });
+        }
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(comment.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Comentário não encontrado" });
+        }
+
         await auxDb.deleteComment(input.id);
         return { success: true, message: "Comentário deletado com sucesso" };
       }),
@@ -525,8 +779,16 @@ export const workOrdersRouter = router({
     // Sugestão de comentário para o cliente via IA (analisa OS + comentários internos + checklists)
     suggestForClient: adminLocalProcedure
       .input(z.object({ workOrderId: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const { sugerirComentarioCliente } = await import("../iaWorkOrders");
+
+        // GUARDA: OS precisa pertencer ao tenant do admin logado.
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(input.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+        }
+
         return await sugerirComentarioCliente(input.workOrderId);
       }),
   }),
@@ -534,6 +796,8 @@ export const workOrdersRouter = router({
   // ==================== RECURRENCE ====================
   recurrence: router({
     process: adminLocalProcedure.mutation(async () => {
+      // Este endpoint processa TODAS as recorrências de TODOS os tenants.
+      // É um job de sistema, não é escopado por tenant.
       const recurrence = await import("../workOrdersRecurrence");
       return await recurrence.processRecurringWorkOrders();
     }),
@@ -543,50 +807,77 @@ export const workOrdersRouter = router({
         workOrderId: z.number(),
         cancelFutureOnly: z.boolean().optional().default(false),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        // GUARDA: OS precisa pertencer ao tenant do admin logado.
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(input.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+        }
+
         const recurrence = await import("../workOrdersRecurrence");
         return await recurrence.cancelRecurrence(input.workOrderId, input.cancelFutureOnly);
       }),
 
     reactivate: adminLocalProcedure
       .input(z.object({ workOrderId: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        // GUARDA: OS precisa pertencer ao tenant do admin logado.
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(input.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+        }
+
         const recurrence = await import("../workOrdersRecurrence");
         return await recurrence.reactivateRecurrence(input.workOrderId);
       }),
 
     getNextDate: adminLocalProcedure
       .input(z.object({ workOrderId: z.number() }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
+        // GUARDA: OS precisa pertencer ao tenant do admin logado.
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(input.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+        }
+
         const recurrence = await import("../workOrdersRecurrence");
         return await recurrence.getNextRecurrenceDate(input.workOrderId);
       }),
 
     getInstances: adminLocalProcedure
       .input(z.object({ parentWorkOrderId: z.number() }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
+        // GUARDA: OS precisa pertencer ao tenant do admin logado.
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(input.parentWorkOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+        }
+
         const recurrence = await import("../workOrdersRecurrence");
         return await recurrence.getRecurrenceInstances(input.parentWorkOrderId);
       }),
   }),
 
   // ==================== METRICS ====================
+  // ATENÇÃO: Métricas não foram escopadas por tenant nesta etapa, conforme solicitado.
+  // Elas continuarão a agregar dados de TODOS os tenants.
   metrics: router({
     getStats: adminLocalProcedure.query(async () => {
       const metrics = await import("../workOrdersMetrics");
       return await metrics.getWorkOrderStats();
     }),
-
     getByStatus: adminLocalProcedure.query(async () => {
       const metrics = await import("../workOrdersMetrics");
       return await metrics.getWorkOrdersByStatus();
     }),
-
     getByType: adminLocalProcedure.query(async () => {
       const metrics = await import("../workOrdersMetrics");
       return await metrics.getWorkOrdersByType();
     }),
-
     getAverageCompletionTime: adminLocalProcedure.query(async () => {
       const metrics = await import("../workOrdersMetrics");
       return await metrics.getAverageCompletionTime();
@@ -596,27 +887,22 @@ export const workOrdersRouter = router({
       const metrics = await import("../workOrdersMetrics");
       return await metrics.getFinancialStats();
     }),
-
     getByMonth: adminLocalProcedure.query(async () => {
       const metrics = await import("../workOrdersMetrics");
       return await metrics.getWorkOrdersByMonth();
     }),
-
     getCompletionRate: adminLocalProcedure.query(async () => {
       const metrics = await import("../workOrdersMetrics");
       return await metrics.getCompletionRate();
     }),
-
     getDelayed: adminLocalProcedure.query(async () => {
       const metrics = await import("../workOrdersMetrics");
       return await metrics.getDelayedWorkOrders();
     }),
-
     getTopClients: adminLocalProcedure.query(async () => {
       const metrics = await import("../workOrdersMetrics");
       return await metrics.getTopClientsByWorkOrders();
     }),
-
     getMaterialsCostByWorkOrder: adminLocalProcedure.query(async () => {
       const metrics = await import("../workOrdersMetrics");
       return await metrics.getMaterialsCostByWorkOrder();
@@ -626,11 +912,17 @@ export const workOrdersRouter = router({
   // ==================== PDF EXPORT ====================
   exportPDF: adminLocalProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
-      const pdfGen = await import("../pdfGenerator");
-      const pdfBuffer = await pdfGen.generateWorkOrderPDF(input.id);
+    .mutation(async ({ input, ctx }) => {
+      // GUARDA: OS precisa pertencer ao tenant do admin logado.
       const workOrdersDb = await import("../workOrdersDb");
       const wo = await workOrdersDb.getWorkOrderById(input.id);
+      if (!wo || wo.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+      }
+
+      const pdfGen = await import("../pdfGenerator");
+      const pdfBuffer = await pdfGen.generateWorkOrderPDF(input.id);
+
       const osNum = wo?.osNumber || `OS-${input.id}`;
       const clientSlug = wo?.clientName
         ? wo.clientName.trim().replace(/[^\w\u00C0-\u00FF]/g, '_').replace(/_+/g, '_').substring(0, 40)
@@ -667,12 +959,19 @@ export const workOrdersRouter = router({
 
   exportBatch: adminLocalProcedure
     .input(z.object({ ids: z.array(z.number()).max(50) }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const JSZip = (await import('jszip')).default;
       const pdfGen = await import("../pdfGenerator");
       const zip = new JSZip();
       const workOrdersDb = await import("../workOrdersDb");
 
+      // GUARDA: Todas as OSs precisam pertencer ao tenant do admin logado.
+      const checks = await Promise.all(input.ids.map(id => workOrdersDb.getWorkOrderById(id)));
+      if (checks.some(wo => !wo || wo.tenantId !== ctx.tenantId)) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Uma ou mais Ordens de Serviço não foram encontradas ou não pertencem ao seu tenant." });
+      }
+
+      // A busca por ID dentro do loop agora é segura pois a posse de todos os IDs foi verificada.
       for (const id of input.ids) {
         try {
           const pdfBuffer = await pdfGen.generateWorkOrderPDF(id);
@@ -706,9 +1005,15 @@ export const workOrdersRouter = router({
 
   sendToClientWhatsapp: adminLocalProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const workOrdersDb = await import("../workOrdersDb");
+
+      // GUARDA: OS precisa pertencer ao tenant do admin logado.
       const wo = await workOrdersDb.getWorkOrderById(input.id);
+      if (!wo || wo.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+      }
+
       if (!wo) throw new Error("OS não encontrada");
 
       const cliente = await db.getClientById(wo.clientId);
@@ -740,9 +1045,15 @@ export const workOrdersRouter = router({
 
   sendToAdminWhatsapp: adminLocalProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const workOrdersDb = await import("../workOrdersDb");
+
+      // GUARDA: OS precisa pertencer ao tenant do admin logado.
       const wo = await workOrdersDb.getWorkOrderById(input.id);
+      if (!wo || wo.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+      }
+
       if (!wo) throw new Error("OS não encontrada");
 
       const portalUrl = `https://app.soluteg.com.br/gestor/work-orders/${input.id}`;
@@ -767,9 +1078,14 @@ export const workOrdersRouter = router({
 
   shareToClientPortal: adminLocalProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const workOrdersDb = await import("../workOrdersDb");
+
+      // GUARDA: OS precisa pertencer ao tenant do admin logado.
       const wo = await workOrdersDb.getWorkOrderById(input.id);
+      if (!wo || wo.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+      }
       if (!wo) throw new Error("OS não encontrada");
 
       let portalTab: string;
@@ -834,8 +1150,16 @@ export const workOrdersRouter = router({
   timeTracking: router({
     list: adminLocalProcedure
       .input(z.object({ workOrderId: z.number() }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         const auxDb = await import("../workOrdersAuxDb");
+
+        // GUARDA: OS precisa pertencer ao tenant do admin logado.
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(input.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+        }
+
         return await auxDb.getTimeEntriesByWorkOrderId(input.workOrderId);
       }),
 
@@ -846,8 +1170,16 @@ export const workOrdersRouter = router({
         startedAt: z.date(),
         notes: z.string().optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const auxDb = await import("../workOrdersAuxDb");
+
+        // GUARDA: OS precisa pertencer ao tenant do admin logado.
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(input.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+        }
+
         await auxDb.createTimeEntry(input);
         return { success: true, message: "Entrada de tempo criada com sucesso" };
       }),
@@ -857,8 +1189,20 @@ export const workOrdersRouter = router({
         id: z.number(),
         endedAt: z.date(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const auxDb = await import("../workOrdersAuxDb");
+
+        // GUARDA MULTI-ETAPA: a entrada de tempo deve pertencer a uma OS do tenant.
+        const entry = await auxDb.getTimeEntryById(input.id);
+        if (!entry) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Entrada de tempo não encontrada" });
+        }
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(entry.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Entrada de tempo não encontrada" });
+        }
+
         await auxDb.endTimeEntry(input.id, input.endedAt);
         return { success: true, message: "Entrada de tempo finalizada com sucesso" };
       }),
@@ -868,8 +1212,20 @@ export const workOrdersRouter = router({
         id: z.number(),
         notes: z.string().optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const auxDb = await import("../workOrdersAuxDb");
+
+        // GUARDA MULTI-ETAPA: a entrada de tempo deve pertencer a uma OS do tenant.
+        const entry = await auxDb.getTimeEntryById(input.id);
+        if (!entry) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Entrada de tempo não encontrada" });
+        }
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(entry.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Entrada de tempo não encontrada" });
+        }
+
         const { id, ...updates } = input;
         await auxDb.updateTimeEntry(id, updates);
         return { success: true, message: "Entrada de tempo atualizada com sucesso" };
@@ -877,16 +1233,36 @@ export const workOrdersRouter = router({
 
     delete: adminLocalProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const auxDb = await import("../workOrdersAuxDb");
+
+        // GUARDA MULTI-ETAPA: a entrada de tempo deve pertencer a uma OS do tenant.
+        const entry = await auxDb.getTimeEntryById(input.id);
+        if (!entry) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Entrada de tempo não encontrada" });
+        }
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(entry.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Entrada de tempo não encontrada" });
+        }
+
         await auxDb.deleteTimeEntry(input.id);
         return { success: true, message: "Entrada de tempo deletada com sucesso" };
       }),
 
     getTotalTime: adminLocalProcedure
       .input(z.object({ workOrderId: z.number() }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         const auxDb = await import("../workOrdersAuxDb");
+
+        // GUARDA: OS precisa pertencer ao tenant do admin logado.
+        const workOrdersDb = await import("../workOrdersDb");
+        const os = await workOrdersDb.getWorkOrderById(input.workOrderId);
+        if (!os || os.tenantId !== ctx.tenantId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+        }
+
         return await auxDb.getTotalTimeSpent(input.workOrderId);
       }),
   }),

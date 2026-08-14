@@ -40,6 +40,13 @@ export async function createWorkOrder(data: Omit<InsertWorkOrder, "osNumber">) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
+  // Guarda fail-closed: 3 dos 5 pontos de criação de OS no projeto esqueceram
+  // tenantId de forma independente (padrão de erro, não acidente isolado). Sem
+  // isso, a OS nasce com tenantId NULL e some silenciosamente de workOrders.list.
+  if (!(data as any).tenantId) {
+    throw new Error("createWorkOrder: tenantId é obrigatório e não foi informado.");
+  }
+
   const osNumber = await generateOsNumber();
   
   const result = await db.insert(workOrders).values({
@@ -71,6 +78,7 @@ export async function getWorkOrderById(id: number) {
       // Campos da OS
       id: workOrders.id,
       osNumber: workOrders.osNumber,
+      tenantId: workOrders.tenantId, // ISOLADO: necessário para as guardas de tenant no router
       adminId: workOrders.adminId,
       clientId: workOrders.clientId,
       type: workOrders.type,
@@ -124,6 +132,7 @@ export async function getWorkOrderById(id: number) {
  * Listar OS com filtros, busca, ordenação e PAGINAÇÃO
  */
 export async function listWorkOrders(filters: {
+  tenantId: number;
   clientId?: number;
   adminId?: number;
   type?: string;
@@ -147,6 +156,7 @@ export async function listWorkOrders(filters: {
 
   // 1. Construir as condições (Filtros e Busca)
   const conditions = [];
+  conditions.push(eq(workOrders.tenantId, filters.tenantId)); // ISOLADO
   if (filters.clientId) conditions.push(eq(workOrders.clientId, filters.clientId));
   if (filters.adminId) conditions.push(eq(workOrders.adminId, filters.adminId));
   if (filters.type) conditions.push(eq(workOrders.type, filters.type as any));

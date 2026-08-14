@@ -105,7 +105,6 @@ export default function AdminCreateWorkOrderNew() {
 
     try {
       const result = await createWorkOrderMutation.mutateAsync({
-        adminId,
         clientId: parseInt(formData.clientId),
         technicianId: formData.technicianId ? parseInt(formData.technicianId) : undefined,
         type: formData.type,

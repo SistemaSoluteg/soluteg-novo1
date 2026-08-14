@@ -12,7 +12,7 @@
  */
 
 import { eq, and } from "drizzle-orm";
-import { getDb, getClientEquipment, getAllClientsWithEquipment } from "./db";
+import { getDb, getClientEquipment, getAllClientsWithEquipment, getClientById } from "./db";
 import { createWorkOrder } from "./workOrdersDb";
 import { createInspectionTask, createChecklistInstance, getTemplateBySlug, getInspectionTasksByWorkOrder } from "./checklistsDb";
 import { workOrders } from "../drizzle/schema";
@@ -52,8 +52,13 @@ export async function createMonthlyOsForClient(
   const equipment = await getClientEquipment(clientId);
   if (equipment.length === 0) return { skipped: true, reason: "sem equipamentos cadastrados" };
 
+  // tenantId vem do cliente, não do chamador — job de sistema processa todos os tenants.
+  const client = await getClientById(clientId);
+  if (!client?.tenantId) return { skipped: true, reason: "cliente sem tenant configurado" };
+
   // Cria a OS principal (sem técnico atribuído — admin designa depois)
   const { id: workOrderId } = await createWorkOrder({
+    tenantId: client.tenantId,
     adminId,
     clientId,
     type: "rotina",
@@ -121,7 +126,14 @@ export async function addEquipmentToMonthlyOs(
   if (existing.length > 0) {
     workOrderId = existing[0].id;
   } else {
+    // tenantId vem do cliente. Diferente de createMonthlyOsForClient, aqui não dá pra
+    // pular silenciosamente — o admin está esperando o equipamento ser cadastrado.
+    const client = await getClientById(clientId);
+    if (!client?.tenantId) {
+      throw new Error("Cliente sem tenant configurado — não é possível gerar a OS mensal");
+    }
     const result = await createWorkOrder({
+      tenantId: client.tenantId,
       adminId,
       clientId,
       type: "rotina",

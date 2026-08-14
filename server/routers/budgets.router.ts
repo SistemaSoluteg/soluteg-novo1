@@ -203,9 +203,15 @@ export const budgetsRouter = router({
       // Reusar o `budget` já carregado pelo token — não precisamos buscar novamente
       let osId: number | null = null;
       if (input.createOs) {
+        // publicProcedure: não há ctx.tenantId (aprovação via link, sem admin logado).
+        // O tenantId só pode vir do próprio orçamento — se não vier, não cria OS órfã.
+        if (!budget.tenantId) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Orçamento sem tenant definido — não é possível gerar a OS" });
+        }
         const workOrdersDb = await import("../workOrdersDb");
         const b = budget as any;
         const osResult = await workOrdersDb.createWorkOrder({
+          tenantId: budget.tenantId,
           adminId: b.adminId,
           clientId: b.clientId,
           type: b.serviceType,
@@ -341,10 +347,13 @@ export const budgetsRouter = router({
 
   generateOs: adminLocalProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const budgetsDb = await import("../budgetsDb");
       const budget = await budgetsDb.getBudgetById(input.id);
       if (!budget) throw new TRPCError({ code: "NOT_FOUND", message: "Orçamento não encontrado" });
+      // budgets.router.ts ainda não foi isolado por tenant (candidato a próxima sub-fase);
+      // esta checagem pontual evita que uma OS nasça a partir de um orçamento de outro tenant.
+      if (budget.tenantId !== ctx.tenantId) throw new TRPCError({ code: "NOT_FOUND", message: "Orçamento não encontrado" });
       if (budget.status !== "aprovado") throw new TRPCError({ code: "BAD_REQUEST", message: "Orçamento precisa estar aprovado" });
 
       const workOrdersDb = await import("../workOrdersDb");
@@ -353,6 +362,7 @@ export const budgetsRouter = router({
         if (existingOs) throw new TRPCError({ code: "BAD_REQUEST", message: "OS já foi gerada para este orçamento" });
       }
       const osResult = await workOrdersDb.createWorkOrder({
+        tenantId: ctx.tenantId,
         adminId: budget.adminId,
         clientId: budget.clientId,
         type: budget.serviceType as any,

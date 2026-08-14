@@ -81,6 +81,7 @@ export async function getBudgetById(id: number) {
     .select({
       id: budgets.id,
       budgetNumber: budgets.budgetNumber,
+      tenantId: budgets.tenantId, // ISOLADO: necessário para propagar tenantId na OS gerada
       adminId: budgets.adminId,
       clientId: budgets.clientId,
       serviceType: budgets.serviceType,
@@ -134,6 +135,7 @@ export async function getBudgetByToken(token: string) {
     .select({
       id: budgets.id,
       budgetNumber: budgets.budgetNumber,
+      tenantId: budgets.tenantId, // ISOLADO: necessário para propagar tenantId na OS gerada
       adminId: budgets.adminId,
       clientId: budgets.clientId,
       serviceType: budgets.serviceType,

@@ -38,7 +38,6 @@ export default function AdminWorkOrderKanban() {
   const debouncedSearch = useDebounce(searchTerm, 500);
 
   const { data, isLoading, refetch } = trpc.workOrders.list.useQuery({
-    adminId: 1, 
     search: debouncedSearch,
     limit: 100,
   });

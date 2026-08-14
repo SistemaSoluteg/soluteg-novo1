@@ -84,6 +84,7 @@ export async function processRecurringWorkOrders() {
       const scheduledDate = new Date(currentYear, currentMonth - 1, wo.recurrenceDay || currentDay);
 
       const newWorkOrder = await workOrdersDb.createWorkOrder({
+        tenantId: wo.tenantId,
         adminId: wo.adminId,
         clientId: wo.clientId,
         type: wo.type!,

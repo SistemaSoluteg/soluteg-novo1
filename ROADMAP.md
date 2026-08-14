@@ -1,6 +1,6 @@
 # Roadmap Soluteg — Status e Próximos Passos
 
-**Última atualização:** 11/08/2026
+**Última atualização:** 13/08/2026
 **Dedicação:** ~3h/dia
 **Princípio:** uma fase por vez. Não pular. Não misturar.
 
@@ -81,7 +81,7 @@ Visão arquitetural completa em [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDO
 | 3.7.1c | Adicionar `tenantId` nas tabelas existentes (nullable) | ✅ Concluída |
 | 3.7.1d | Script de migração de dados (dry-run) | ✅ Concluída |
 | 3.7.1e | Executar migração real + criar conta platformAdmin | ✅ Concluída |
-| 3.7.2 | Isolamento de queries (helper `forTenant`) — **mais crítica** | 🟡 EM ANDAMENTO (fundação + piloto `technicians` concluídos; próximo: escalar para demais routers) |
+| 3.7.2 | Isolamento de queries (helper `forTenant`) — **mais crítica** | 🟡 EM ANDAMENTO (`technicians`, `clients` e `workOrders` isolados; próximo: a definir) |
 | 3.7.1f | `tenantId` NOT NULL + FKs + índices + rotacionar JWT_SECRET — **travamento final, só depois de 3.7.2** | ⏳ Pendente (após o isolamento) |
 | 3.7.3 | Procedures tRPC tipadas por papel | ⏳ Pendente |
 | 3.7.4 | UI portal platformAdmin | ⏳ Pendente |
@@ -110,6 +110,8 @@ O **PDV (ponto de venda)** **não** será multi-tenant: fica **exclusivo da loja
 - **10/08/2026** — 3.7.2 piloto `technicians` concluído. Adicionados `forTenantId`/`withTenantId` (variantes que recebem `tenantId: number` direto, para uso em módulos de dados). Router `technicians` isolado: `list` filtra por tenant, `create` carimba `tenantId`, `getById`/`update`/`updatePassword`/`delete` escopados por tenant. `deleteTechnician` corrigido para filtrar por tenant também no UPDATE de workOrders (write cross-tenant eliminado). `adminId` removido do input schema de `list` e `create` — IDs sempre vêm do contexto.
 - **11/08/2026** — Revisão completa da documentação e estado do projeto. Próximo passo confirmado: escalar o isolamento de queries da sub-fase 3.7.2 para os demais routers.
 - **11/08/2026** — 3.7.2 router `clients` isolado (commit `91e0403`). `list`/`broadcastMessage` passam a filtrar por `getClientsByTenant(ctx.tenantId)`; `create` carimba `tenantId` via `withTenant`; `getById`/`getByUsername`/`update`/`updatePassword`/`delete` ganharam guarda `client.tenantId !== ctx.tenantId → NOT_FOUND` (nenhum tinha checagem antes); `equipment.list`/`equipment.add` trocaram guarda de `adminId` para `tenantId`; `equipment.remove` ganhou guarda multi-etapa nova (equipamento → clientId → cliente → tenantId), corrigindo um IDOR pré-existente onde qualquer admin logado podia remover equipamento de qualquer cliente/tenant só sabendo o ID. `getClientByUsername` continua global (login do cliente não passa pelo router). Confirmado via `scripts/migrate-to-multi-tenant.ts` que `client_equipment` não está entre as 38 tabelas com `tenantId` — não tem a coluna, por isso o guard em duas etapas. `pnpm run check`: mesmos 33 erros pré-existentes de antes da mudança, zero novos.
+- **12/08/2026** — Consolidação da nomenclatura e da metodologia de validação usadas nos dois routers isolados até aqui: **Método A** (`technicians`) = filtro direto na query via `forTenantId`/`withTenantId`, usado quando o router acessa dados por um helper isolado; **Método B** (`clients`) = guarda no router após buscar via `server/db.ts`, usado quando o dado é lido por uma função compartilhada por vários arquivos (não dá pra mudar a assinatura sem quebrar quem mais chama). Todo router isolado passa por **ghost-probe**: cria um registro sob outro tenant e confirma que fica invisível para o admin do JNC. Registrado também: a tabela `client_equipment` estava ausente no banco de staging (`_tst`) — schema desalinhado, não era um problema do multi-tenant em si, mas travava o boot e quebrava equipamento/upload de documento; criada e validada. Dívidas anotadas para depois: `getTechnicianById` tem `tenantId` opcional (vira obrigatório ao isolar `technicianPortal` e `workOrders`); código morto identificado durante a auditoria dos routers a remover; `3.7.1f` só entra após todos os routers isolados. Próximo router: `workOrders` (75 registros, Método B, mesmo rito de `clients`).
+- **13/08/2026** — 3.7.2 router `workOrders` isolado. `workOrders.router.ts` e seus sub-routers (`tasks`, `materials`, etc.) foram isolados usando o **Método B** (guarda no router), com guardas multi-etapa para sub-recursos sem `tenantId` próprio. Duas rotas Express legadas em `server/index.ts` (`GET /api/work-orders/:id` e `POST /api/work-orders`) foram corrigidas, fechando uma brecha de vazamento de dados e uma regressão funcional (OSs criadas pelo portal do cliente ficavam órfãs). O sub-router `metrics` foi explicitamente deixado de fora do escopo e documentado como dívida técnica.
 
 ### Pendência crítica
 

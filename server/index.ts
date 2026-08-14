@@ -558,7 +558,14 @@ async function startServer() {
       }
 
       const workOrdersDb = await import("./workOrdersDb");
+
+      if (!client.tenantId) {
+        console.error(`[CRIAÇÃO OS PORTAL] Cliente ${clientId} não possui tenantId. Abortando.`);
+        return res.status(500).json({ message: "Cliente sem tenant configurado, contate o suporte" });
+      }
+
       const result = await workOrdersDb.createWorkOrder({
+        tenantId: client.tenantId,
         adminId: client.adminId,
         clientId: clientId,
         type,
@@ -601,18 +608,40 @@ async function startServer() {
   // Retorna os dados completos de uma OS específica.
   // ============================================================
   app.get("/api/work-orders/:id", requireAdminAuth, async (req, res) => {
-    try {
-      const { getWorkOrderById } = await import("./db");
+    try { // ISOLADO COM GUARDA
+      // 1. Resolver tenantId do admin autenticado
+      const token = parseCookies(req)["admin_token"];
+      const payload = verifyToken(token);
+      if (!payload?.adminId) {
+        return res.status(401).json({ message: "Token de admin inválido" });
+      }
+      const adminId = payload.adminId;
+
+      const { getDb } = await import("./db");
+      const { admins } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return res.status(503).json({ message: "Banco indisponível" });
+
+      const [adminRow] = await db.select({ tenantId: admins.tenantId }).from(admins).where(eq(admins.id, adminId)).limit(1);
+      const adminTenantId = adminRow?.tenantId;
+      if (!adminTenantId) {
+        return res.status(403).json({ message: "Admin não associado a um tenant." });
+      }
+
+      // 2. Buscar OS e aplicar guarda de tenant
+      const { getWorkOrderById } = await import("./workOrdersDb");
       const workOrder = await getWorkOrderById(parseInt(req.params.id));
 
-      if (!workOrder) {
-        // OS não encontrada no banco
+      // GUARDA: OS precisa pertencer ao tenant do admin logado.
+      if (!workOrder || workOrder.tenantId !== adminTenantId) {
         return res.status(404).json({ message: "OS não encontrada" });
       }
 
       res.json(workOrder);
 
-    } catch (error) {
+    } catch (error: any) {
+      console.error("Erro ao carregar OS por ID (rota legada):", error);
       res.status(500).json({ message: "Erro ao carregar OS" });
     }
   });

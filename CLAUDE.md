@@ -4,7 +4,7 @@
 > Contém o **contexto operacional vivo** — o que está sendo feito agora, regras invioláveis, comandos comuns.
 > Para visão arquitetural completa, ver [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDOFF.md).
 
-**Última atualização:** 11/08/2026 (prontos para escalar a Sub-fase 3.7.2)
+**Última atualização:** 13/08/2026 (workOrders isolado, próximo router a definir)
 
 ---
 
@@ -22,10 +22,16 @@
 
 ---
 
-## 2. Estado atual (11/08/2026)
+## 2. Estado atual (12/08/2026)
 
 ### Em andamento
-**Fase 3.7 — Refactor multi-tenant.** Branch `multi-tenant`. **Sub-fase 3.7.2 (Isolamento de queries) em andamento — 2 routers isolados (`technicians`, `clients`).**
+**Fase 3.7 — Refactor multi-tenant.** Branch `multi-tenant`. **Sub-fase 3.7.2 (Isolamento de queries) em andamento — 3 routers isolados (`technicians`, `clients`, `workOrders`).**
+
+Dois métodos de isolamento em uso, conforme o router usa helper isolado ou `server/db.ts` compartilhado:
+- **Método A** (`technicians`): filtro direto na query via `forTenantId`/`withTenantId`.
+- **Método B** (`clients`): guarda no router (`if (registro.tenantId !== ctx.tenantId) throw NOT_FOUND`) após buscar via `db.ts`, porque as funções de `db.ts` são usadas por vários arquivos e não podem mudar de assinatura.
+
+Cada router isolado é validado com **ghost-probe**: criar um registro sob outro tenant e confirmar que fica invisível para o admin do JNC.
 
 ### Concluído recentemente
 - ✅ Sub-fase 3.7.1a — Tabelas de auditoria (`auditLog`, `loginAttempts`, `migrationAuditLog`) + helper `server/lib/environment.ts`
@@ -39,11 +45,18 @@
 - ✅ Sub-fase 3.7.2 (Fundação): Helper `forTenant` fail-closed, `tenantId` no `TrpcContext`, `admins.tenantId` adicionada e populada em staging.
 - ✅ Sub-fase 3.7.2 (Piloto): Router `technicians` 100% isolado por tenant.
 - ✅ Sub-fase 3.7.2 (Escala, router 2/N): Router `clients` isolado por tenant (commit `91e0403`), incluindo correção de um IDOR pré-existente em `equipment.remove` (sem checagem de posse alguma antes desta mudança). `getClientByUsername` permanece global — é usada pelo login do cliente, que não passa pelo router. Detalhes em [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDOFF.md) seção 8.8.
+- ✅ Fixes de infra descobertos no caminho da 3.7.2: pipeline de deploy do staging corrigido (pm2 apontava pro diretório de produção; `ecosystem.config.cjs` resolveu — `deploy-tst` agora funciona de verdade); tabela `client_equipment` estava ausente no banco de staging (`_tst`), criada — corrigiu bug de equipamento e normalizou upload de documento.
+- ✅ Sub-fase 3.7.2 (Escala, router 3/N): Router `workOrders` e rotas Express legadas associadas foram 100% isolados por tenant. Corrigidas múltiplas vulnerabilidades de vazamento de dados e escrita cross-tenant. Sub-router `metrics` adiado e documentado como dívida técnica.
 
 ### Próxima
-**Sub-fase 3.7.2 (Escala):** Isolar o próximo router (ex: `budgets`).
+**Sub-fase 3.7.2 (Escala, router 4/N):** Isolar o próximo router (a ser definido com Thiago).
 
-Após os pilotos de `technicians` e `clients`, o próximo passo é continuar escalando a implementação do helper `forTenant` para os demais routers da aplicação (dos menores para os maiores), garantindo o isolamento de dados em todas as queries.
+Rito de sempre: prompt para a IA do terminal (Antigravity) → revisão do diff com o Thiago → `deploy-tst` → validação com ghost-probe.
+
+**Dívidas técnicas anotadas (sem pressa):**
+- `getTechnicianById` tem `tenantId` opcional — vira obrigatório quando `technicianPortal` e `workOrders` forem isolados.
+- Código morto a remover (identificado durante a auditoria dos routers).
+- `3.7.1f` (NOT NULL + FKs + índices) só entra depois que **todos** os routers estiverem isolados.
 
 ### Roadmap restante (resumo)
 3.7.2 (escalar isolamento) → 3.7.1f (NOT NULL + rotação JWT) → 3.7.3 a 3.7.8.

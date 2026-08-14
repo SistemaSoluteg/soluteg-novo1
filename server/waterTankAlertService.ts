@@ -45,6 +45,7 @@ interface SensorConfig {
   id: number;
   adminId: number;
   clientId: number;
+  tenantId: number;
   clientName: string;
   clientPhone: string | null;
   tankType: "superior" | "inferior";
@@ -203,6 +204,7 @@ async function createEmergencyWorkOrder(cfg: SensorConfig, tankName: string, cur
       : `OS criada automaticamente pelo sistema de monitoramento.\n\nNível atual: ${currentLevel}%\nCaixa: ${tankName} (Cisterna Inferior)\n\nOrientações iniciais:\n- DESLIGAR BOMBA DE RECALQUE IMEDIATAMENTE\n- Verificar boia inferior — possível falha\n- Verificar entrada de água da rede pública`;
 
     const result = await createWorkOrder({
+      tenantId: cfg.tenantId,
       adminId: cfg.adminId,
       clientId: cfg.clientId,
       technicianId: cfg.technicianId ?? null,
@@ -256,7 +258,7 @@ export async function checkAndSendAlerts(params: {
         s.id, s.adminId, s.clientId, s.tankType, s.deadVolumePct,
         s.alarm1Pct, s.alarm2Pct, s.alarm3BoiaPct, s.alarm3BoiaEnabled,
         s.technicianId, s.dropStepPct, s.alertPhone, s.alertPhone2,
-        c.name AS clientName, c.phone AS clientPhone,
+        c.tenantId AS tenantId, c.name AS clientName, c.phone AS clientPhone,
         t.name AS technicianName, t.phone AS technicianPhone
       FROM waterTankSensors s
       JOIN clients c ON c.id = s.clientId

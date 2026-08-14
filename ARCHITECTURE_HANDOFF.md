@@ -1,7 +1,7 @@
 # Soluteg — Documento Técnico de Arquitetura e Handoff
 
-> **Versão:** 1.2
-> **Data:** 11 de agosto de 2026
+> **Versão:** 1.3
+> **Data:** 13 de agosto de 2026
 > **Autor:** Thiago (com assessoria de Claude AI)
 > **Audiência:** Arquiteto de software, desenvolvedores seniores, contributors técnicos
 > **Status do projeto:** Em produção (JNC) | Refactor multi-tenant em andamento
@@ -716,15 +716,52 @@ O script também passou a usar `getDb()` de `server/db.ts` (pool com `timezone: 
 
 **Commit:** `91e0403`.
 
+### 8.9 Metodologia consolidada e fixes de infra encontrados no caminho (12/08/2026)
+
+Com dois routers isolados, a metodologia da 3.7.2 ficou clara o suficiente para nomear:
+
+- **Método A** (`technicians`): filtro direto na query via `forTenantId`/`withTenantId`. Usado quando o router acessa os dados por um helper isolado — não há risco de quebrar outros chamadores.
+- **Método B** (`clients`): guarda no router (`if (registro.tenantId !== ctx.tenantId) throw NOT_FOUND`) aplicada **depois** de buscar via `server/db.ts`. Usado quando a função de leitura é compartilhada por vários arquivos e mudar sua assinatura quebraria outros pontos de chamada.
+- **Validação — ghost-probe:** todo router isolado é validado criando um registro sob outro tenant (ex.: `Soluteg Direto`) e confirmando que ele fica **invisível** para o admin do JNC — tanto em listagens quanto em acesso direto por ID.
+
+**Fixes de infra descobertos no caminho (não são multi-tenant em si, mas bloqueavam a validação em staging):**
+- **Pipeline de deploy do staging quebrado:** o processo pm2 `soluteg-staging` rodava o código apontado para o diretório de **produção**, então todo `deploy-tst` era um no-op silencioso — o staging nunca recebia o código novo. Corrigido com `ecosystem.config.cjs` apontando para o diretório correto (já registrado na seção 8.7/histórico do ROADMAP, 08/08/2026).
+- **Schema do staging desalinhado:** a tabela `client_equipment` estava **ausente** do banco `_tst` (existia só em produção). Isso travava o boot da aplicação e quebrava a listagem de equipamento e o upload de documento em staging. Criada a tabela em staging, boot limpo, funcionalidade normalizada.
+
+**Dívidas técnicas anotadas (sem prioridade imediata):**
+- `getTechnicianById` tem `tenantId` opcional na assinatura — precisa virar obrigatório quando `technicianPortal` e `workOrders` forem isolados (ambos dependem dela).
+- Código morto identificado durante a auditoria dos routers — remover numa passada dedicada, fora do caminho crítico do isolamento.
+- `3.7.1f` (NOT NULL + FKs + índices + rotação de `JWT_SECRET`) só entra depois que **todos** os routers estiverem isolados — mantém a ordem já decidida em 05/08/2026.
+
+### 8.10 Sub-fase 3.7.2 — Router `workOrders` e rotas legadas isolados (13/08/2026)
+
+**Objetivo:** Isolar o router mais complexo e crítico do sistema, `workOrders`, que apresentava múltiplas vulnerabilidades de vazamento de dados e escrita cross-tenant.
+
+**Entregue:**
+- **Isolamento do tRPC router (`workOrders.router.ts`):**
+  - **Método B** (guarda no router) foi aplicado em todos os endpoints, pois `workOrdersDb.ts` é um módulo compartilhado.
+  - `list`: agora filtra obrigatoriamente por `ctx.tenantId`. O `adminId` do input foi removido.
+  - `create`: agora usa `ctx.adminId` e carimba `tenantId` via `withTenant(ctx, ...)`, corrigindo uma vulnerabilidade e garantindo que novas OSs pertençam ao tenant correto.
+  - `getById`, `update`, `delete`, `deleteBatch`, e todas as outras mutações (`updateStatus`, `assignTechnician`, etc.) receberam uma guarda que verifica a posse da OS (`wo.tenantId === ctx.tenantId`) antes de qualquer operação. `deleteBatch` e `exportBatch` validam todos os IDs do lote.
+  - **Sub-routers (`tasks`, `materials`, `attachments`, etc.):** Todos os endpoints foram protegidos. Leituras/escritas que recebem `workOrderId` validam a posse da OS principal. Mutações que recebem apenas o ID do sub-recurso (ex: `tasks.delete`) usam uma **guarda multi-etapa** (sub-recurso → `workOrderId` → OS → `tenantId`), corrigindo vulnerabilidades de acesso direto a objeto (IDOR).
+- **Isolamento de rotas Express legadas (`server/index.ts`):**
+  - `GET /api/work-orders/:id`: A rota, que era usada pelo frontend e não passava pelo tRPC, foi corrigida. Agora ela resolve o `tenantId` do admin autenticado e aplica a mesma guarda de posse do tRPC, fechando uma brecha de vazamento de dados.
+  - `POST /api/work-orders`: A rota de criação de OS pelo portal do cliente foi corrigida para carimbar o `tenantId` do cliente na nova OS. Isso resolve uma regressão funcional crítica onde OSs criadas pelo portal ficavam órfãs (`tenantId=NULL`) e invisíveis para os admins.
+- **Dívida Técnica:** O sub-router `metrics` foi **explicitamente deixado fora do escopo** desta etapa, conforme decisão. Ele continua agregando dados de todos os tenants. A pendência foi registrada.
+
+**Validação:**
+- ✅ **Estático:** `pnpm run check` (`tsc --noEmit`) com 33 erros — idêntico à baseline pré-mudança, zero erros novos. Verificado revertendo os arquivos tocados e comparando a lista de erros, não só a contagem.
+- ⏳ **Runtime/staging — PENDENTE.** Ainda **não** executados: (a) ghost-probe cross-tenant confirmando que um admin do tenant 1 não vê/edita/cria OSs do tenant 2, tanto via tRPC quanto pelas duas rotas Express legadas; (b) os 3 fluxos de criação que a guarda fail-closed passou a exigir `tenantId` (`addEquipmentToMonthlyOs`, `createMonthlyOsForClient`/cron, OS emergencial de caixa d'água); (c) fluxos de negócio do JNC (criação, edição, notificação, PDF) em `tst.soluteg.com.br`. Esta seção deve ser atualizada para "confirmado" **somente após** `deploy-tst` e a validação manual passarem — não antes.
+
 ---
 
 ## 9. O que vem pela frente
 
 ### 9.1 Sub-fase 3.7.2 — Escalar Isolamento de Queries *(🟡 EM ANDAMENTO)*
 
-**Escopo:** Aplicar o padrão de isolamento de queries, validado nos pilotos `technicians` e `clients`, para todos os demais routers da aplicação que lidam com dados operacionais.
+**Escopo:** Aplicar o padrão de isolamento de queries, validado nos pilotos `technicians` (Método A) e `clients`/`workOrders` (Método B), para todos os demais routers da aplicação que lidam com dados operacionais.
 
-- **Estratégia:** Isolar um router por vez, dos menores para os maiores, validando cada um. Feitos: `technicians`, `clients`. Próximo router sugerido: `budgets`.
+- **Estratégia:** Isolar um router por vez, validando cada um com ghost-probe antes de avançar. Feitos: `technicians`, `clients`, `workOrders`. **Próximo: a definir.**
 - **PDV:** As 6 tabelas de PDV (`products`, `sales`, etc.) estão **fora** do escopo, pois a funcionalidade é exclusiva da JNC.
 
 **Estimativa:** 10-15h de auditoria e refatoração + 5h de testes. **Sub-fase mais arriscada.**

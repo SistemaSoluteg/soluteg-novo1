@@ -25,6 +25,18 @@ export async function createTask(task: InsertWorkOrderTask) {
   return result;
 }
 
+// ISOLADO: usada pela guarda multi-etapa do router (tarefa → workOrderId → tenant).
+export async function getTaskById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db
+    .select()
+    .from(workOrderTasks)
+    .where(eq(workOrderTasks.id, id))
+    .limit(1);
+  return result[0] || null;
+}
+
 export async function getTasksByWorkOrderId(workOrderId: number) {
   const db = await getDb();
   if (!db) return [];
@@ -80,6 +92,18 @@ export async function createMaterial(material: InsertWorkOrderMaterial) {
   return result;
 }
 
+// ISOLADO: usada pela guarda multi-etapa do router (material → workOrderId → tenant).
+export async function getMaterialById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db
+    .select()
+    .from(workOrderMaterials)
+    .where(eq(workOrderMaterials.id, id))
+    .limit(1);
+  return result[0] || null;
+}
+
 export async function getMaterialsByWorkOrderId(workOrderId: number) {
   const db = await getDb();
   if (!db) return [];
@@ -122,6 +146,21 @@ export async function createAttachment(attachment: InsertWorkOrderAttachment) {
   if (!db) throw new Error("Banco de dados não disponível");
   const result = await db.insert(workOrderAttachments).values(attachment);
   return result;
+}
+
+/**
+ * BUSCAR ANEXO POR ID (ISOLADO): usada pela guarda multi-etapa do router
+ * (anexo → workOrderId → tenant).
+ */
+export async function getAttachmentById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db
+    .select()
+    .from(workOrderAttachments)
+    .where(eq(workOrderAttachments.id, id))
+    .limit(1);
+  return result[0] || null;
 }
 
 /**
@@ -194,6 +233,18 @@ export async function createComment(comment: InsertWorkOrderComment) {
   return result;
 }
 
+// ISOLADO: usada pela guarda multi-etapa do router (comentário → workOrderId → tenant).
+export async function getCommentById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db
+    .select()
+    .from(workOrderComments)
+    .where(eq(workOrderComments.id, id))
+    .limit(1);
+  return result[0] || null;
+}
+
 export async function getCommentsByWorkOrderId(workOrderId: number, includeInternal: boolean = true) {
   const db = await getDb();
   if (!db) return [];
@@ -234,6 +285,18 @@ export async function createTimeEntry(entry: InsertWorkOrderTimeTracking) {
   if (!db) throw new Error("Banco de dados não disponível");
   const result = await db.insert(workOrderTimeTracking).values(entry);
   return result;
+}
+
+// ISOLADO: usada pela guarda multi-etapa do router (entrada de tempo → workOrderId → tenant).
+export async function getTimeEntryById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db
+    .select()
+    .from(workOrderTimeTracking)
+    .where(eq(workOrderTimeTracking.id, id))
+    .limit(1);
+  return result[0] || null;
 }
 
 export async function getTimeEntriesByWorkOrderId(workOrderId: number) {

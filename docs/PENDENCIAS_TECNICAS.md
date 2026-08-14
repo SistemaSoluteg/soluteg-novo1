@@ -13,7 +13,9 @@
 
 ## 🟡 Média Prioridade
 
-> Todos os itens de prioridade média identificados na auditoria inicial foram resolvidos.
+| ID | Onde | O que fazer |
+|---|---|---|
+| SEC-01 | `server/index.ts` | A rota `GET /api/admin-metrics` não tem autenticação e aceita `adminId` via query string, permitindo que qualquer pessoa enumere métricas de qualquer admin. Deve ser protegida com `requireAdminAuth` e usar o `adminId` do contexto. |
 
 ---
 
