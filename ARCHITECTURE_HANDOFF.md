@@ -757,15 +757,39 @@ Com dois routers isolados, a metodologia da 3.7.2 ficou clara o suficiente para 
 - ✅ **Backfill de órfã**: a validação revelou 1 OS com `tenantId=NULL` no staging (uma "Vistoria de Agosto" criada por um teste manual de `addEquipmentToMonthlyOs` na janela **entre** a migração de 05/08 e o deploy da guarda fail-closed). Corrigida com `UPDATE workOrders SET tenantId=1 WHERE tenantId IS NULL` (todo dado real do staging é do JNC/tenant 1); `COUNT(NULL)=0` após o backfill, e a OS voltou a aparecer na lista. Confirma empiricamente a classe de bug que a guarda passou a prevenir.
 - 🔵 **Cobertos por revisão de código, não exercitáveis em staging:** OS emergencial de caixa d'água (`waterTankAlertService`) e notificações WhatsApp — ambos desligados por config no staging (`MQTT_DISABLED`/`WHATSAPP_DISABLED`); a mudança não altera a lógica deles, só carimba `tenantId` antes das chamadas existentes. Cron mensal (`createMonthlyOsForClient`) — mesmo caminho de código do `addEquipmentToMonthlyOs`, que foi exercitado.
 
+### 8.11 Sub-fase 3.7.2 — Router `budgets` isolado + fix de FK-do-input no `workOrders` (14/08/2026)
+
+**Objetivo:** Isolar o router `budgets` (4º router). Terreno mais contido que `workOrders`: sem rotas Express, sem cron, todo acesso centralizado em `server/budgetsDb.ts`, e as 4 tabelas (`budgets`, `budgetItems`, `budgetHistory`, `budgetAttachments`) já com coluna `tenantId` própria.
+
+**Entregue (`budgets`, commit `5483c1b`, Método B):**
+- `list` e `getMetrics` filtram por `ctx.tenantId` (via `forTenantId`); `adminId` removido do input (regra 5.3). `getMetrics` antes vazava métricas cross-tenant.
+- `getById`, `update`, `saveItems`, `getItems`, `getHistory`, `exportPDF`, `sendWhatsappBudget`, `finalize`, `rejectByAdmin`, `generateOs` ganharam guarda de posse (`budget.tenantId !== ctx.tenantId → NOT_FOUND`).
+- `delete` e `shareToPortal` **não tinham checagem nenhuma** (IDOR) — guarda adicionada.
+- `create` valida posse do `clientId` antes de criar (evita referenciar cliente de outro tenant e vazar PII no PDF/WhatsApp).
+- `attachments.updateCaption`/`delete` (recebem só o `id` do anexo): guarda multi-etapa (anexo → `budgetId` → budget → `tenantId`), com novo helper de leitura `getBudgetAttachmentById`.
+- `finalize` passou a usar `ctx.adminId` (antes vinha do input).
+- **Fronteira do token preservada:** `getByToken`, `getItemsByToken`, `approve`, `reject`, `exportPDFByToken`, `attachments.listByToken` permanecem `publicProcedure` **globais por design** — a página pública de aprovação (`/orcamento/:token`) não tem admin logado nem `ctx.tenantId`; o token opaco (64 hex, `crypto.randomBytes`) é a credencial. Comentado explicitamente no código como "GLOBAL POR DESIGN" para ninguém adicionar guarda que quebraria a aprovação.
+- **Sub-tabelas carimbadas:** `budgetItems`, `budgetHistory`, `budgetAttachments` recebem `tenantId` do budget pai na escrita (evita novos NULLs antes da 3.7.1f). `createBudget` ganhou guarda fail-closed (igual `createWorkOrder`).
+
+**Entregue (fix de FK-do-input no `workOrders`, commit `ddc420e`):** durante a revisão do `budgets` foi identificado que `workOrders.router.ts → create`/`update`/`assignTechnician` (já commitados) carimbavam o `tenantId` da OS corretamente, mas **não validavam** que o `clientId`/`technicianId` vindo do input pertence ao tenant do admin — mesma classe de IDOR (vazamento de PII cross-tenant via FK forjada). Guardas adicionadas via `getClientById` + `getTechnicianById(id, ctx.tenantId)`. Isso também começou a pagar a dívida do `tenantId` opcional em `getTechnicianById`.
+
+**Validação (staging, 14/08/2026):**
+- ✅ `tsc --noEmit`: 33 erros (baseline, zero novos) em ambos os commits.
+- ✅ **Ghost-probe budgets:** budget semeado no tenant 2 invisível ao admin do JNC na `list`/`getById`/métricas e "não encontrado" por ID direto.
+- ✅ **Link público intacto:** `/orcamento/:token` de um budget real do JNC carrega itens/anexos/PDF e permite aprovar/reprovar — as procedures por token continuam globais.
+- ✅ **Fix de FK contra requisição forjada:** chamada `budgets.create` direta (DevTools) com `clientId` de um cliente semeado no tenant 2 retornou `NOT_FOUND` "Cliente não encontrado" — guarda confirmada na build de staging (`dist/index.js`). `workOrders.create` usa guarda idêntica (mesma classe, coberto por simetria).
+- ✅ Regressão JNC do fluxo completo de orçamento (criar → itens → finalizar → link → aprovar → OS gerada carimbando tenant → PDF).
+
 ---
 
 ## 9. O que vem pela frente
 
 ### 9.1 Sub-fase 3.7.2 — Escalar Isolamento de Queries *(🟡 EM ANDAMENTO)*
 
-**Escopo:** Aplicar o padrão de isolamento de queries, validado nos pilotos `technicians` (Método A) e `clients`/`workOrders` (Método B), para todos os demais routers da aplicação que lidam com dados operacionais.
+**Escopo:** Aplicar o padrão de isolamento de queries, validado nos pilotos `technicians` (Método A) e `clients`/`workOrders`/`budgets` (Método B), para todos os demais routers da aplicação que lidam com dados operacionais.
 
-- **Estratégia:** Isolar um router por vez, validando cada um com ghost-probe antes de avançar. Feitos: `technicians`, `clients`, `workOrders`. **Próximo: a definir.**
+- **Estratégia:** Isolar um router por vez, validando cada um com ghost-probe antes de avançar. Feitos: `technicians`, `clients`, `workOrders`, `budgets`. **Próximo: a definir** (candidatos: `technicianPortal`, `checklists`, `documents`, `waterTankAdmin`).
+- **Padrão de guarda de FK-do-input:** ao isolar um router, além da posse do registro principal, validar **toda foreign key vinda do input** (`clientId`, `technicianId`, etc.) contra o tenant — senão dá pra referenciar registro de outro tenant e vazar PII. Lição incorporada a partir do `budgets`/`workOrders`.
 - **PDV:** As 6 tabelas de PDV (`products`, `sales`, etc.) estão **fora** do escopo, pois a funcionalidade é exclusiva da JNC.
 
 **Estimativa:** 10-15h de auditoria e refatoração + 5h de testes. **Sub-fase mais arriscada.**
