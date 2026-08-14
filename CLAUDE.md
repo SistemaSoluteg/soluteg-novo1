@@ -22,7 +22,7 @@
 
 ---
 
-## 2. Estado atual (12/08/2026)
+## 2. Estado atual (14/08/2026)
 
 ### Em andamento
 **Fase 3.7 — Refactor multi-tenant.** Branch `multi-tenant`. **Sub-fase 3.7.2 (Isolamento de queries) em andamento — 3 routers isolados (`technicians`, `clients`, `workOrders`).**
@@ -46,17 +46,20 @@ Cada router isolado é validado com **ghost-probe**: criar um registro sob outro
 - ✅ Sub-fase 3.7.2 (Piloto): Router `technicians` 100% isolado por tenant.
 - ✅ Sub-fase 3.7.2 (Escala, router 2/N): Router `clients` isolado por tenant (commit `91e0403`), incluindo correção de um IDOR pré-existente em `equipment.remove` (sem checagem de posse alguma antes desta mudança). `getClientByUsername` permanece global — é usada pelo login do cliente, que não passa pelo router. Detalhes em [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDOFF.md) seção 8.8.
 - ✅ Fixes de infra descobertos no caminho da 3.7.2: pipeline de deploy do staging corrigido (pm2 apontava pro diretório de produção; `ecosystem.config.cjs` resolveu — `deploy-tst` agora funciona de verdade); tabela `client_equipment` estava ausente no banco de staging (`_tst`), criada — corrigiu bug de equipamento e normalizou upload de documento.
-- ✅ Sub-fase 3.7.2 (Escala, router 3/N): Router `workOrders` e rotas Express legadas associadas foram 100% isolados por tenant. Corrigidas múltiplas vulnerabilidades de vazamento de dados e escrita cross-tenant. Sub-router `metrics` adiado e documentado como dívida técnica.
+- ✅ Sub-fase 3.7.2 (Escala, router 3/N): Router `workOrders` isolado e **validado em staging** (14/08). Além do router tRPC (Método B + guardas multi-etapa nos sub-routers), foram cobertos: 2 rotas Express legadas (`GET`/`POST /api/work-orders`), 3 caminhos extras de criação de OS (`workOrdersRecurrence`, `budgets.approve`/`generateOs`), e uma **guarda fail-closed** em `workOrdersDb.createWorkOrder` que expôs mais 3 call sites de sistema (`monthlyOsJob` 2x, `waterTankAlertService`) — todos corrigidos. Ghost-probe cross-tenant OK; backfill de 1 OS órfã (`tenantId=NULL`) feita no staging. Sub-router `metrics` adiado (dívida técnica); `GET /api/admin-metrics` sem auth registrado como `SEC-01`. Detalhes na seção 8.10 do [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDOFF.md).
 
 ### Próxima
 **Sub-fase 3.7.2 (Escala, router 4/N):** Isolar o próximo router (a ser definido com Thiago).
 
 Rito de sempre: prompt para a IA do terminal (Antigravity) → revisão do diff com o Thiago → `deploy-tst` → validação com ghost-probe.
 
+**Lição da 3.7.2/`workOrders` (aplicar nos próximos routers):** ao isolar um router, fazer `grep` por **todos** os pontos de escrita da tabela — incluindo chamadas sem prefixo de módulo (`createX(` além de `db.createX(`) e rotas Express fora do tRPC (`app.get/post` em `server/index.ts`) — não só o router. O `tsc` não pega nada disso; a validação real é a revisão do diff + ghost-probe.
+
 **Dívidas técnicas anotadas (sem pressa):**
-- `getTechnicianById` tem `tenantId` opcional — vira obrigatório quando `technicianPortal` e `workOrders` forem isolados.
-- Código morto a remover (identificado durante a auditoria dos routers).
-- `3.7.1f` (NOT NULL + FKs + índices) só entra depois que **todos** os routers estiverem isolados.
+- `getTechnicianById` tem `tenantId` opcional — vira obrigatório quando `technicianPortal` for isolado (`workOrders`, que também dependia, já foi).
+- Código morto a remover (ex.: `createWorkOrder` órfã em `server/db.ts:694`, sem nenhum import — identificado durante a auditoria).
+- `metrics` do `workOrders` e `GET /api/admin-metrics` sem auth (`SEC-01`) — pendências registradas, fora do escopo do isolamento atual.
+- `3.7.1f` (NOT NULL + FKs + índices) só entra depois que **todos** os routers estiverem isolados — e precisa de um backfill final de `tenantId IS NULL` antes de travar (novos NULLs podem surgir enquanto nem todo caminho de escrita tiver a guarda).
 
 ### Roadmap restante (resumo)
 3.7.2 (escalar isolamento) → 3.7.1f (NOT NULL + rotação JWT) → 3.7.3 a 3.7.8.

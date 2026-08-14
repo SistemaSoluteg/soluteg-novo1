@@ -427,6 +427,27 @@ SELECT COUNT(*) AS com_tenant_preenchido FROM clients WHERE tenantId IS NOT NULL
 
 ---
 
+## 3.7.2 — Isolamento de queries (código) + backfill de `tenantId` NULL
+
+A sub-fase 3.7.2 é **código** (não ALTER de schema), mas gera duas pendências para produção:
+
+1. **Deploy do código isolado.** Os routers isolados até aqui (`technicians`, `clients`, `workOrders`) e todas as correções associadas (rotas Express legadas, guardas fail-closed, carimbo de `tenantId` em todos os caminhos de criação de OS) só vão pra produção junto com o merge `multi-tenant → master`. Não replicar isoladamente.
+
+2. **Backfill de `tenantId IS NULL` antes da 3.7.1f.** Descoberto no staging (14/08): a guarda fail-closed passou a exigir `tenantId` em toda criação de OS, mas **registros criados na janela entre a migração (`3.7.1e`) e o deploy da guarda podem ter `tenantId=NULL`** — no staging apareceu 1 OS órfã (vistoria mensal criada em teste). Em produção, rodar **imediatamente antes da 3.7.1f** (o passo que trava `NOT NULL`):
+
+   ```sql
+   -- Diagnóstico: quantos órfãos, por tabela (repetir para cada tabela operacional com tenantId)
+   SELECT COUNT(*) FROM workOrders WHERE tenantId IS NULL;
+   -- ... clients, budgets, laudos, etc.
+
+   -- Backfill (produção = 100% JNC = tenant 1):
+   UPDATE workOrders SET tenantId = 1 WHERE tenantId IS NULL;
+   -- ... repetir para as demais tabelas operacionais que acusarem NULL
+   ```
+   A `3.7.1f` já prevê "garantir 0 nulls" antes do `ALTER ... NOT NULL` — este item é o lembrete concreto de que a origem dos NULLs é essa janela, não só dados legados.
+
+---
+
 ## Status
 
 | Mudança | Staging | Produção |

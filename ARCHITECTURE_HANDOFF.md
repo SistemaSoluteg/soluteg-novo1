@@ -749,9 +749,13 @@ Com dois routers isolados, a metodologia da 3.7.2 ficou clara o suficiente para 
   - `POST /api/work-orders`: A rota de criação de OS pelo portal do cliente foi corrigida para carimbar o `tenantId` do cliente na nova OS. Isso resolve uma regressão funcional crítica onde OSs criadas pelo portal ficavam órfãs (`tenantId=NULL`) e invisíveis para os admins.
 - **Dívida Técnica:** O sub-router `metrics` foi **explicitamente deixado fora do escopo** desta etapa, conforme decisão. Ele continua agregando dados de todos os tenants. A pendência foi registrada.
 
-**Validação:**
+**Validação (concluída em staging, 14/08/2026):**
 - ✅ **Estático:** `pnpm run check` (`tsc --noEmit`) com 33 erros — idêntico à baseline pré-mudança, zero erros novos. Verificado revertendo os arquivos tocados e comparando a lista de erros, não só a contagem.
-- ⏳ **Runtime/staging — PENDENTE.** Ainda **não** executados: (a) ghost-probe cross-tenant confirmando que um admin do tenant 1 não vê/edita/cria OSs do tenant 2, tanto via tRPC quanto pelas duas rotas Express legadas; (b) os 3 fluxos de criação que a guarda fail-closed passou a exigir `tenantId` (`addEquipmentToMonthlyOs`, `createMonthlyOsForClient`/cron, OS emergencial de caixa d'água); (c) fluxos de negócio do JNC (criação, edição, notificação, PDF) em `tst.soluteg.com.br`. Esta seção deve ser atualizada para "confirmado" **somente após** `deploy-tst` e a validação manual passarem — não antes.
+- ✅ **Ghost-probe cross-tenant** em `tst.soluteg.com.br`: OS semeada via SQL sob o tenant 2 (Soluteg Direto) ficou **invisível** para o admin do JNC (tenant 1) tanto na `list` quanto no acesso direto por ID via tRPC (`getById` → "não encontrada"). Controle positivo confirmado (OS real do tenant 1 continua acessível). *Nota: a checagem direta da rota Express `GET /api/work-orders/:id` pela barra do navegador é interceptada pelo roteador do frontend; a guarda dessa rota usa o mesmo padrão já validado no tRPC e foi confirmada por revisão de código.*
+- ✅ **Regressão JNC**: listar, criar, editar e deletar OS funcionando normalmente.
+- ✅ **Fluxo fail-closed `addEquipmentToMonthlyOs`**: adicionar equipamento a um cliente gera a OS mensal já carimbando `tenantId` corretamente.
+- ✅ **Backfill de órfã**: a validação revelou 1 OS com `tenantId=NULL` no staging (uma "Vistoria de Agosto" criada por um teste manual de `addEquipmentToMonthlyOs` na janela **entre** a migração de 05/08 e o deploy da guarda fail-closed). Corrigida com `UPDATE workOrders SET tenantId=1 WHERE tenantId IS NULL` (todo dado real do staging é do JNC/tenant 1); `COUNT(NULL)=0` após o backfill, e a OS voltou a aparecer na lista. Confirma empiricamente a classe de bug que a guarda passou a prevenir.
+- 🔵 **Cobertos por revisão de código, não exercitáveis em staging:** OS emergencial de caixa d'água (`waterTankAlertService`) e notificações WhatsApp — ambos desligados por config no staging (`MQTT_DISABLED`/`WHATSAPP_DISABLED`); a mudança não altera a lógica deles, só carimba `tenantId` antes das chamadas existentes. Cron mensal (`createMonthlyOsForClient`) — mesmo caminho de código do `addEquipmentToMonthlyOs`, que foi exercitado.
 
 ---
 
