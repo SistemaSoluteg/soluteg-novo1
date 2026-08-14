@@ -56,6 +56,25 @@ export const workOrdersRouter = router({
     }))
     .mutation(async ({ input, ctx }) => {
       const workOrdersDb = await import("../workOrdersDb");
+
+      // GUARDA: o cliente precisa pertencer ao tenant do admin logado.
+      // ANTES: sem checagem — dava pra criar OS no tenant 1 referenciando clientId
+      // de outro tenant, vazando nome/telefone/endereço desse cliente no PDF e no Zap.
+      const cliente = await db.getClientById(input.clientId);
+      if (!cliente || cliente.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Cliente não encontrado" });
+      }
+
+      // GUARDA: se um técnico foi informado, precisa pertencer ao mesmo tenant.
+      let tech: any;
+      if (input.technicianId) {
+        const technicianDb = await import("../technicianDb");
+        tech = await technicianDb.getTechnicianById(input.technicianId, ctx.tenantId);
+        if (!tech) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Técnico não encontrado" });
+        }
+      }
+
       const dataToCreate = withTenant(ctx, {
         ...input,
         adminId: ctx.adminId,
@@ -70,8 +89,7 @@ export const workOrdersRouter = router({
 
       console.log(`--- DEBUG JNC: OS criada com ID ${osId} ---`);
 
-      const cliente = await db.getClientById(input.clientId);
-      const nomeCliente = cliente?.name || `ID ${input.clientId}`;
+      const nomeCliente = cliente.name || `ID ${input.clientId}`;
       const portalUrl = `https://app.soluteg.com.br/gestor/work-orders/${osId}`;
 
       const msg =
@@ -84,10 +102,8 @@ export const workOrdersRouter = router({
 
       sendWhatsappAlert(msg).catch(e => console.error("Erro no Zap JNC:", e));
 
-      // Notifica o técnico se foi atribuído na criação
+      // Notifica o técnico se foi atribuído na criação (já validado pela guarda acima)
       if (input.technicianId) {
-        const technicianDb = await import("../technicianDb");
-        const tech = await technicianDb.getTechnicianById(input.technicianId);
         notify(
           {
             title: "Nova OS atribuída",
@@ -150,6 +166,15 @@ export const workOrdersRouter = router({
       const existing = await workOrdersDb.getWorkOrderById(input.id);
       if (!existing || existing.tenantId !== ctx.tenantId) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
+      }
+
+      // GUARDA: se um technicianId foi informado (não-nulo), precisa pertencer ao mesmo tenant.
+      if (input.technicianId) {
+        const technicianDb = await import("../technicianDb");
+        const tech = await technicianDb.getTechnicianById(input.technicianId, ctx.tenantId);
+        if (!tech) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Técnico não encontrado" });
+        }
       }
 
       const { id, ...data } = input;
@@ -244,15 +269,22 @@ export const workOrdersRouter = router({
         throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
       }
 
+      // GUARDA: se um técnico foi informado (não-nulo), precisa pertencer ao mesmo tenant.
+      // technicianId pode vir null pra desatribuir — nesse caso não valida, só passa adiante.
+      let tech: any;
+      if (input.technicianId) {
+        const technicianDb = await import("../technicianDb");
+        tech = await technicianDb.getTechnicianById(input.technicianId, ctx.tenantId);
+        if (!tech) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Técnico não encontrado" });
+        }
+      }
+
       await workOrdersDb.assignTechnicianToWorkOrder(input.workOrderId, input.technicianId);
 
-      // Notifica o técnico recém-atribuído (se algum foi passado)
+      // Notifica o técnico recém-atribuído (se algum foi passado, já validado pela guarda acima)
       if (input.technicianId) {
-        const [os, technicianDb] = await Promise.all([
-          workOrdersDb.getWorkOrderById(input.workOrderId),
-          import("../technicianDb"),
-        ]);
-        const tech = await technicianDb.getTechnicianById(input.technicianId);
+        const os = await workOrdersDb.getWorkOrderById(input.workOrderId);
 
         if (os) {
           notify(
