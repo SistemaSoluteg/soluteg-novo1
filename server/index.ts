@@ -519,11 +519,40 @@ async function startServer() {
   // Remove um documento do banco de dados pelo ID.
   // ============================================================
   app.delete("/api/client-documents/:id", requireAdminAuth, async (req, res) => {
-    try {
-      const { deleteClientDocument } = await import("./db");
+    try { // ISOLADO COM GUARDA
+      // 1. Resolver tenantId do admin autenticado
+      const token = parseCookies(req)["admin_token"];
+      const payload = verifyToken(token);
+      if (!payload?.adminId) {
+        return res.status(401).json({ message: "Token de admin inválido" });
+      }
+      const adminId = payload.adminId;
+
+      const { getDb } = await import("./db");
+      const { admins } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return res.status(503).json({ message: "Banco indisponível" });
+
+      const [adminRow] = await db.select({ tenantId: admins.tenantId }).from(admins).where(eq(admins.id, adminId)).limit(1);
+      const adminTenantId = adminRow?.tenantId;
+      if (!adminTenantId) {
+        return res.status(403).json({ message: "Admin não associado a um tenant." });
+      }
+
+      // 2. Buscar documento e aplicar guarda de tenant
+      const { getDocumentById, deleteClientDocument } = await import("./db");
+      const document = await getDocumentById(parseInt(req.params.id));
+
+      // GUARDA: documento precisa pertencer ao tenant do admin logado.
+      if (!document || document.tenantId !== adminTenantId) {
+        return res.status(404).json({ message: "Documento não encontrado" });
+      }
+
       await deleteClientDocument(parseInt(req.params.id));
       res.json({ success: true });
     } catch (error) {
+      console.error("Erro ao deletar documento (rota legada):", error);
       res.status(500).json({ message: "Erro ao deletar documento" });
     }
   });

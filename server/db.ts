@@ -534,7 +534,12 @@ export async function updateClientLastLogin(id: number) {
 export async function createClientDocument(document: InsertClientDocument) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
+
+  // GUARDA fail-closed: nunca inserir documento sem tenantId (mesmo padrão de createWorkOrder).
+  if (!(document as any).tenantId) {
+    throw new Error("createClientDocument: tenantId ausente — insert bloqueado (fail-closed).");
+  }
+
   const result = await db.insert(clientDocuments).values(document);
   return result;
 }
@@ -642,11 +647,13 @@ export async function updateAdminCustomLabel(id: number, customLabel: string) {
 }
 
 
-// Get all documents for admin
-export async function getDocumentsByAdminId(adminId: number) {
+// Get all documents for tenant
+// Renomeada de getDocumentsByAdminId — filtrava por clients.adminId (vazava entre
+// tenants do mesmo grupo de admins). Agora filtra direto por clientDocuments.tenantId.
+export async function getDocumentsByTenant(tenantId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
+
   const docs = await db
     .select({
       id: clientDocuments.id,
@@ -660,8 +667,8 @@ export async function getDocumentsByAdminId(adminId: number) {
     })
     .from(clientDocuments)
     .innerJoin(clients, eq(clientDocuments.clientId, clients.id))
-    .where(eq(clients.adminId, adminId));
-  
+    .where(forTenantId(tenantId, clientDocuments));
+
   return docs;
 }
 
@@ -870,7 +877,7 @@ export async function getDocumentsByClientIdWithFilters(filters: {
 }
 
 export async function getAllDocumentsWithFilters(filters: {
-  adminId: number;
+  tenantId: number;
   search?: string;
   clientId?: number;
   documentType?: string;
@@ -881,7 +888,9 @@ export async function getAllDocumentsWithFilters(filters: {
   if (!db) throw new Error("Database not available");
 
   // Build conditions array
-  const conditions: any[] = [];
+  // GUARDA fail-closed: antes desta mudança, filters.adminId nunca era usado
+  // aqui — a query devolvia documentos de TODOS os tenants, sem filtro algum.
+  const conditions: any[] = [forTenantId(filters.tenantId, clientDocuments)];
 
   if (filters.clientId) {
     conditions.push(eq(clientDocuments.clientId, filters.clientId));
@@ -921,9 +930,8 @@ export async function getAllDocumentsWithFilters(filters: {
     .from(clientDocuments)
     .innerJoin(clients, eq(clientDocuments.clientId, clients.id));
 
-  if (conditions.length > 0) {
-    query = query.where(and(...conditions)) as any;
-  }
+  // conditions sempre tem ao menos o filtro de tenant — where incondicional.
+  query = query.where(and(...conditions)) as any;
 
   const results = await query.orderBy(desc(clientDocuments.uploadedAt));
   return results;
