@@ -12,15 +12,21 @@ function computeStatus(level: number): "otimo" | "bom" | "alerta" | "critico" {
 export async function saveWaterTankReading(data: {
   clientId: number;
   adminId: number;
+  tenantId?: number | null;
   tankName: string;
   currentLevel: number;
 }) {
   const db = await getDb();
   if (!db) throw new Error("DB indisponível");
 
+  // Carimbo best-effort de tenantId — SEM fail-closed. Esta é a ponta de ingestão
+  // (MQTT + registro manual): perder uma leitura de nível por tenantId ausente é
+  // risco real (caixa secar/transbordar sem alerta). tenantId null é aceito e
+  // corrigido depois por backfill.
   return db.insert(waterTankMonitoring).values({
     clientId: data.clientId,
     adminId: data.adminId,
+    tenantId: data.tenantId ?? null,
     tankName: data.tankName,
     currentLevel: data.currentLevel,
     status: computeStatus(data.currentLevel),

@@ -347,12 +347,15 @@ export async function checkAndSendAlerts(params: {
 
       const deliveryError = errors.length > 0 && !delivered ? errors.join("; ") : null;
 
+      // Carimbo best-effort de tenantId (cfg.tenantId vem do JOIN com clients) —
+      // SEM fail-closed: perder o registro de um alarme é risco real, tenantId
+      // null é aceito e corrigido depois por backfill.
       await db!.execute(sql`
         INSERT INTO waterTankAlertLog
-          (sensorId, clientId, tankName, alertType, triggerPct, currentLevel, sentTo,
+          (tenantId, sensorId, clientId, tankName, alertType, triggerPct, currentLevel, sentTo,
            direction, tankType, observation, delivered, deliveryError, osId)
         VALUES
-          (${sensorId}, ${clientId}, ${tankName}, ${alertType}, ${triggerPct},
+          (${cfg.tenantId ?? null}, ${sensorId}, ${clientId}, ${tankName}, ${alertType}, ${triggerPct},
            ${currentLevel}, ${phonesToNotify.join(", ") || null}, ${direction}, ${cfg.tankType},
            ${observation}, ${delivered ? 1 : 0}, ${deliveryError}, ${osId})
       `);

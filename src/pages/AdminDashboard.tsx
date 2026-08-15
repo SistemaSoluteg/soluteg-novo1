@@ -77,7 +77,7 @@ export default function AdminDashboard() {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: recentAlerts = [] } = (trpc as any).waterTankAdmin.listRecentAlerts.useQuery(
-    { adminId: adminId ?? 0, limit: 20 },
+    { limit: 20 },
     { enabled: !!adminId, refetchInterval: 60_000 },
   ) as { data: any[] };
 

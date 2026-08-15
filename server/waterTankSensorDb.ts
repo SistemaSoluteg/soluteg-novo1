@@ -23,9 +23,15 @@ export async function upsertSensorDevice(deviceId: string): Promise<void> {
 /**
  * Returns sensor config if the device is fully assigned (clientId + tankName set).
  * Returns null if pending (not yet assigned by admin).
+ *
+ * Lookup por deviceId — GLOBAL POR DESIGN (é o "login" do sensor via MQTT, sem
+ * ctx/tenant disponível nessa ponta). Só ganha o campo tenantId no retorno,
+ * usado a jusante (mqttService/waterTankDb/waterTankAlertService) para carimbar
+ * as escritas — sem filtro aqui.
  */
 export async function getAssignedSensorByDeviceId(deviceId: string): Promise<{
   id: number;
+  tenantId: number | null;
   clientId: number;
   adminId: number;
   tankName: string;
@@ -39,7 +45,7 @@ export async function getAssignedSensorByDeviceId(deviceId: string): Promise<{
   if (!db) return null;
 
   const result = await db.execute(sql`
-    SELECT id, clientId, adminId, tankName, deadVolumePct, alarm1Pct, alarm2Pct,
+    SELECT id, tenantId, clientId, adminId, tankName, deadVolumePct, alarm1Pct, alarm2Pct,
            distVazia, distCheia
     FROM waterTankSensors
     WHERE deviceId = ${deviceId}
@@ -54,6 +60,11 @@ export async function getAssignedSensorByDeviceId(deviceId: string): Promise<{
 
 // ── Pending sensors ───────────────────────────────────────────────────────────
 
+// GLOBAL POR DESIGN: sensores pendentes (clientId/tenantId NULL, device anunciado
+// mas não atribuído) são um pool compartilhado — qualquer admin vê e pode reivindicar
+// qualquer device pendente. Não é vazamento de dado de tenant (pendente não tem dono
+// ainda), mas em multi-tenant real é uma política que precisa de decisão futura
+// (provavelmente via platformAdmin). Por enquanto mantido global, sem filtro.
 export async function listPendingSensors(): Promise<Array<{
   id: number;
   deviceId: string;
@@ -74,7 +85,7 @@ export async function listPendingSensors(): Promise<Array<{
 
 // ── Assigned sensors ──────────────────────────────────────────────────────────
 
-export async function listSensorsWithStatus(adminId: number): Promise<Array<{
+export async function listSensorsWithStatus(tenantId: number): Promise<Array<{
   id: number;
   deviceId: string | null;
   clientId: number;
@@ -128,7 +139,7 @@ export async function listSensorsWithStatus(adminId: number): Promise<Array<{
         GROUP BY clientId, tankName
       ) w2 ON w1.clientId = w2.clientId AND w1.tankName = w2.tankName AND w1.measuredAt = w2.maxAt
     ) latest ON latest.clientId = s.clientId AND latest.tankName = s.tankName
-    WHERE s.adminId = ${adminId} AND s.clientId IS NOT NULL
+    WHERE s.tenantId = ${tenantId} AND s.clientId IS NOT NULL
     ORDER BY c.name, s.tankName
   `);
 
@@ -140,6 +151,7 @@ export async function listSensorsWithStatus(adminId: number): Promise<Array<{
 export type AssignData = {
   clientId: number;
   adminId: number;
+  tenantId: number;
   tankName: string;
   capacity?: number | null;
   notes?: string | null;
@@ -166,6 +178,7 @@ export async function assignSensor(sensorId: number, data: AssignData) {
     .set({
       clientId: data.clientId,
       adminId: data.adminId,
+      tenantId: data.tenantId,
       tankName: data.tankName,
       capacity: data.capacity ?? null,
       notes: data.notes ?? null,
@@ -188,8 +201,8 @@ export async function assignSensor(sensorId: number, data: AssignData) {
 
 export async function updateSensor(
   id: number,
-  adminId: number,
-  data: Partial<Omit<AssignData, "clientId" | "adminId">>,
+  tenantId: number,
+  data: Partial<Omit<AssignData, "clientId" | "adminId" | "tenantId">>,
 ) {
   const db = await getDb();
   if (!db) throw new Error("DB indisponível");
@@ -197,23 +210,23 @@ export async function updateSensor(
   return db
     .update(waterTankSensors)
     .set({ ...data })
-    .where(and(eq(waterTankSensors.id, id), eq(waterTankSensors.adminId, adminId)));
+    .where(and(eq(waterTankSensors.id, id), eq(waterTankSensors.tenantId, tenantId)));
 }
 
-export async function deleteSensor(id: number, adminId: number) {
+export async function deleteSensor(id: number, tenantId: number) {
   const db = await getDb();
   if (!db) throw new Error("DB indisponível");
 
-  // Pending sensors (adminId IS NULL) or sensors owned by this admin can be deleted
+  // Pending sensors (tenantId IS NULL) or sensors owned by this tenant can be deleted
   await db.execute(sql`
     DELETE FROM waterTankSensors
-    WHERE id = ${id} AND (adminId IS NULL OR adminId = ${adminId})
+    WHERE id = ${id} AND (tenantId IS NULL OR tenantId = ${tenantId})
   `);
 }
 
 // ── Dashboard helpers (unchanged) ─────────────────────────────────────────────
 
-export async function getSensorById(sensorId: number, adminId: number): Promise<{
+export async function getSensorById(sensorId: number, tenantId: number): Promise<{
   id: number;
   deviceId: string | null;
   clientId: number;
@@ -254,7 +267,7 @@ export async function getSensorById(sensorId: number, adminId: number): Promise<
       ORDER BY measuredAt DESC
       LIMIT 1
     ) latest ON latest.clientId = s.clientId AND latest.tankName = s.tankName
-    WHERE s.id = ${sensorId} AND s.adminId = ${adminId}
+    WHERE s.id = ${sensorId} AND s.tenantId = ${tenantId}
     LIMIT 1
   `);
   const rows = (result as unknown as [any[], any])[0] as any[];

@@ -118,6 +118,7 @@ type BufferEntry = {
   timer: ReturnType<typeof setTimeout>;
   sensor: {
     id: number;
+    tenantId: number | null;
     clientId: number;
     adminId: number;
     tankName: string;
@@ -146,9 +147,12 @@ async function flushBuffer(deviceId: string) {
   }
 
   const { saveWaterTankReading } = await import("./waterTankDb");
+  // Best-effort: grava mesmo se entry.sensor.tenantId vier null (sem fail-closed —
+  // ver comentário em saveWaterTankReading).
   await saveWaterTankReading({
     clientId: entry.sensor.clientId,
     adminId: entry.sensor.adminId,
+    tenantId: entry.sensor.tenantId,
     tankName: entry.sensor.tankName,
     currentLevel,
   });

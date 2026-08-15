@@ -147,12 +147,12 @@ export default function AdminWaterTankDashboard() {
   }, []);
 
   const { data, isLoading, isError } = trpc.waterTankAdmin.getSensorDashboard.useQuery(
-    { adminId: adminId ?? 0, sensorId, days },
+    { sensorId, days },
     { enabled: !!adminId && !!sensorId, refetchInterval: 30_000 },
   );
 
   const { data: faults = [], refetch: refetchFaults } = trpc.waterTankAdmin.listFaults.useQuery(
-    { adminId: adminId ?? 0, sensorId, limit: 50 },
+    { sensorId, limit: 50 },
     { enabled: !!adminId && !!sensorId },
   );
 
@@ -237,7 +237,6 @@ export default function AdminWaterTankDashboard() {
   const handleRegisterFault = () => {
     if (!faultType || !adminId) return;
     registerFaultMutation.mutate({
-      adminId,
       sensorId,
       faultType: faultType as any,
       description: faultDesc || undefined,

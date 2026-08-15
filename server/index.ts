@@ -791,19 +791,18 @@ async function startServer() {
         return res.status(400).json({ message: "levelPercentage deve ser um número entre 0 e 100" });
       }
 
-      // Resolver adminId se não fornecido
-      let resolvedAdminId = adminId;
-      if (!resolvedAdminId) {
-        const { getClientById } = await import("./db");
-        const clientRecord = await getClientById(parseInt(clientId));
-        if (!clientRecord) return res.status(404).json({ message: "Cliente não encontrado" });
-        resolvedAdminId = clientRecord.adminId;
-      }
+      // Resolver adminId (se não fornecido) e tenantId (sempre, via cliente) —
+      // carimbo best-effort, sem fail-closed (mesma regra da ingestão MQTT).
+      const { getClientById } = await import("./db");
+      const clientRecord = await getClientById(parseInt(clientId));
+      if (!clientRecord) return res.status(404).json({ message: "Cliente não encontrado" });
+      const resolvedAdminId = adminId || clientRecord.adminId;
 
       const { saveWaterTankReading } = await import("./waterTankDb");
       await saveWaterTankReading({
         clientId: parseInt(clientId),
         adminId: resolvedAdminId,
+        tenantId: clientRecord.tenantId,
         tankName,
         currentLevel: level,
       });

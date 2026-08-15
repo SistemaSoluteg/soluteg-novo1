@@ -1,7 +1,9 @@
 import { router, adminLocalProcedure } from "../_core/trpc";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
+import { TRPCError } from "@trpc/server";
 import { getDb } from "../db";
+import * as db from "../db";
 import {
   listSensorsWithStatus,
   listPendingSensors,
@@ -55,32 +57,51 @@ const updateFields = {
 };
 
 export const waterTankAdminRouter = router({
-  /** Sensors waiting for assignment (clientId is null) */
+  // GLOBAL POR DESIGN: sensores pendentes ainda não têm clientId/tenantId
+  // (device anunciado, não atribuído) — pool compartilhado entre tenants.
+  // Política de atribuição de device a tenant é decisão de fase futura
+  // (provavelmente via platformAdmin). Ver comentário em listPendingSensors.
   listPending: adminLocalProcedure
-    .input(z.object({ adminId: z.number() }))
     .query(async () => {
       return listPendingSensors();
     }),
 
-  /** Sensors already assigned to a client under this admin */
+  /** Sensors already assigned to a client under this tenant */
   listSensors: adminLocalProcedure
-    .input(z.object({ adminId: z.number() }))
-    .query(async ({ input }) => {
-      return listSensorsWithStatus(input.adminId);
+    .query(async ({ ctx }) => {
+      return listSensorsWithStatus(ctx.tenantId);
     }),
 
   /** Assign a pending sensor to a client and name the tank */
   assignSensor: adminLocalProcedure
-    .input(z.object({ adminId: z.number(), sensorId: z.number(), ...assignFields }))
-    .mutation(async ({ input }) => {
+    .input(z.object({ sensorId: z.number(), ...assignFields }))
+    .mutation(async ({ input, ctx }) => {
+      // GUARDA: o cliente precisa pertencer ao tenant do admin logado.
+      // Sem isso, um sensor poderia ser atribuído a um cliente de outro tenant,
+      // vazando nome/telefone desse cliente nos alertas de caixa d'água.
+      const cliente = await db.getClientById(input.clientId);
+      if (!cliente || cliente.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Cliente não encontrado" });
+      }
+
+      // GUARDA: se um técnico foi informado, precisa pertencer ao mesmo tenant.
+      if (input.technicianId) {
+        const technicianDb = await import("../technicianDb");
+        const tech = await technicianDb.getTechnicianById(input.technicianId, ctx.tenantId);
+        if (!tech) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Técnico não encontrado" });
+        }
+      }
+
       // Busca deviceId para invalidar caches após a atribuição
-      const db = await getDb();
-      const devResult = db ? await db.execute(sql`SELECT deviceId FROM waterTankSensors WHERE id = ${input.sensorId} LIMIT 1`) : null;
+      const dbConn = await getDb();
+      const devResult = dbConn ? await dbConn.execute(sql`SELECT deviceId FROM waterTankSensors WHERE id = ${input.sensorId} LIMIT 1`) : null;
       const deviceId: string | null = devResult ? ((devResult as unknown as [any[], any])[0] as any[])[0]?.deviceId ?? null : null;
 
       await assignSensor(input.sensorId, {
         clientId: input.clientId,
-        adminId: input.adminId,
+        adminId: ctx.adminId,
+        tenantId: ctx.tenantId,
         tankName: input.tankName,
         capacity: input.capacity ?? null,
         notes: input.notes ?? null,
@@ -107,14 +128,14 @@ export const waterTankAdminRouter = router({
 
   /** Update config of an already-assigned sensor */
   updateSensor: adminLocalProcedure
-    .input(z.object({ adminId: z.number(), sensorId: z.number(), ...updateFields }))
-    .mutation(async ({ input }) => {
-      // Busca deviceId para invalidar caches após a atualização
-      const db = await getDb();
-      const devResult = db ? await db.execute(sql`SELECT deviceId FROM waterTankSensors WHERE id = ${input.sensorId} AND adminId = ${input.adminId} LIMIT 1`) : null;
+    .input(z.object({ sensorId: z.number(), ...updateFields }))
+    .mutation(async ({ input, ctx }) => {
+      // Busca deviceId para invalidar caches após a atualização (guarda de posse por tenant)
+      const dbConn = await getDb();
+      const devResult = dbConn ? await dbConn.execute(sql`SELECT deviceId FROM waterTankSensors WHERE id = ${input.sensorId} AND tenantId = ${ctx.tenantId} LIMIT 1`) : null;
       const deviceId: string | null = devResult ? ((devResult as unknown as [any[], any])[0] as any[])[0]?.deviceId ?? null : null;
 
-      await updateSensor(input.sensorId, input.adminId, {
+      await updateSensor(input.sensorId, ctx.tenantId, {
         tankName: input.tankName,
         capacity: input.capacity ?? null,
         notes: input.notes ?? null,
@@ -140,16 +161,16 @@ export const waterTankAdminRouter = router({
     }),
 
   deleteSensor: adminLocalProcedure
-    .input(z.object({ adminId: z.number(), sensorId: z.number() }))
-    .mutation(async ({ input }) => {
-      await deleteSensor(input.sensorId, input.adminId);
+    .input(z.object({ sensorId: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      await deleteSensor(input.sensorId, ctx.tenantId);
       return { ok: true };
     }),
 
   getSensorDashboard: adminLocalProcedure
-    .input(z.object({ adminId: z.number(), sensorId: z.number(), days: z.number().positive().max(30).optional() }))
-    .query(async ({ input }) => {
-      const sensor = await getSensorById(input.sensorId, input.adminId);
+    .input(z.object({ sensorId: z.number(), days: z.number().positive().max(30).optional() }))
+    .query(async ({ input, ctx }) => {
+      const sensor = await getSensorById(input.sensorId, ctx.tenantId);
       if (!sensor) throw new Error("Sensor não encontrado");
       const [history, alerts] = await Promise.all([
         getSensorReadingHistory(sensor.clientId, sensor.tankName, input.days ?? 1),
@@ -161,22 +182,21 @@ export const waterTankAdminRouter = router({
   /** Registra uma falha de equipamento vinculada a um sensor */
   registerFault: adminLocalProcedure
     .input(z.object({
-      adminId: z.number(),
       sensorId: z.number(),
       faultType: z.enum(["boia", "cebola", "bomba", "falta_agua", "tubulacao", "acionamento", "fiacao", "outro"]),
       description: z.string().optional(),
       osId: z.number().optional(),
       registeredBy: z.string().optional(),
     }))
-    .mutation(async ({ input }) => {
-      const db = await getDb();
-      if (!db) throw new Error("DB indisponível");
+    .mutation(async ({ input, ctx }) => {
+      const dbConn = await getDb();
+      if (!dbConn) throw new Error("DB indisponível");
 
-      // Valida que o sensor pertence ao admin e obtém clientId / tankName
-      const sensorResult = await db.execute(sql`
+      // Valida que o sensor pertence ao tenant e obtém clientId / tankName
+      const sensorResult = await dbConn.execute(sql`
         SELECT id, clientId, tankName
         FROM waterTankSensors
-        WHERE id = ${input.sensorId} AND adminId = ${input.adminId}
+        WHERE id = ${input.sensorId} AND tenantId = ${ctx.tenantId}
         LIMIT 1
       `);
       const sensors = (sensorResult as unknown as [any[], any])[0] as any[];
@@ -184,7 +204,7 @@ export const waterTankAdminRouter = router({
       const sensor = sensors[0];
 
       // Última leitura do sensor
-      const levelResult = await db.execute(sql`
+      const levelResult = await dbConn.execute(sql`
         SELECT currentLevel
         FROM waterTankMonitoring
         WHERE clientId = ${sensor.clientId} AND tankName = ${sensor.tankName}
@@ -194,22 +214,22 @@ export const waterTankAdminRouter = router({
       const levels = (levelResult as unknown as [any[], any])[0] as any[];
       const levelAtFault: number = levels[0]?.currentLevel ?? 0;
 
-      // Valida que a OS vinculada pertence ao mesmo admin (se fornecida)
+      // Valida que a OS vinculada pertence ao mesmo tenant (se fornecida)
       let resolvedOsId: number | null = null;
       if (input.osId != null) {
-        const osCheck = await db.execute(sql`
-          SELECT id FROM workOrders WHERE id = ${input.osId} AND adminId = ${input.adminId} LIMIT 1
+        const osCheck = await dbConn.execute(sql`
+          SELECT id FROM workOrders WHERE id = ${input.osId} AND tenantId = ${ctx.tenantId} LIMIT 1
         `);
         const osRows = (osCheck as unknown as [any[], any])[0] as any[];
         if (osRows.length) resolvedOsId = input.osId;
         // Se não encontrar, ignora silenciosamente (não vincula OS inválida)
       }
 
-      const insertResult = await db.execute(sql`
+      const insertResult = await dbConn.execute(sql`
         INSERT INTO waterTankFaultLog
-          (sensorId, clientId, tankName, faultType, description, levelAtFault, osId, registeredBy)
+          (tenantId, sensorId, clientId, tankName, faultType, description, levelAtFault, osId, registeredBy)
         VALUES
-          (${input.sensorId}, ${sensor.clientId}, ${sensor.tankName},
+          (${ctx.tenantId}, ${input.sensorId}, ${sensor.clientId}, ${sensor.tankName},
            ${input.faultType}, ${input.description ?? null}, ${levelAtFault},
            ${resolvedOsId}, ${input.registeredBy ?? null})
       `);
@@ -218,23 +238,22 @@ export const waterTankAdminRouter = router({
       return { success: true, id: insertId };
     }),
 
-  /** Lista falhas registradas de sensores do admin */
+  /** Lista falhas registradas de sensores do tenant */
   listFaults: adminLocalProcedure
     .input(z.object({
-      adminId: z.number(),
       sensorId: z.number().optional(),
       limit: z.number().default(50),
       offset: z.number().default(0),
     }))
-    .query(async ({ input }) => {
-      const db = await getDb();
-      if (!db) return [];
+    .query(async ({ input, ctx }) => {
+      const dbConn = await getDb();
+      if (!dbConn) return [];
 
       const sensorFilter = input.sensorId != null
         ? sql`AND f.sensorId = ${input.sensorId}`
         : sql``;
 
-      const result = await db.execute(sql`
+      const result = await dbConn.execute(sql`
         SELECT
           f.id, f.sensorId, f.clientId, f.tankName, f.faultType,
           f.description, f.levelAtFault, f.osId, f.registeredBy, f.createdAt,
@@ -242,7 +261,7 @@ export const waterTankAdminRouter = router({
         FROM waterTankFaultLog f
         JOIN waterTankSensors s ON s.id = f.sensorId
         LEFT JOIN workOrders wo ON wo.id = f.osId
-        WHERE s.adminId = ${input.adminId}
+        WHERE s.tenantId = ${ctx.tenantId}
         ${sensorFilter}
         ORDER BY f.createdAt DESC
         LIMIT ${input.limit} OFFSET ${input.offset}
@@ -254,13 +273,12 @@ export const waterTankAdminRouter = router({
   /** Estatísticas de falhas e alertas do período */
   getFaultStats: adminLocalProcedure
     .input(z.object({
-      adminId: z.number(),
       sensorId: z.number().optional(),
       days: z.number().default(30),
     }))
-    .query(async ({ input }) => {
-      const db = await getDb();
-      if (!db) return { byType: [], totalFaults: 0, totalAlerts: 0 };
+    .query(async ({ input, ctx }) => {
+      const dbConn = await getDb();
+      if (!dbConn) return { byType: [], totalFaults: 0, totalAlerts: 0 };
 
       const cutoff = sql.raw(
         `'${new Date(Date.now() - input.days * 86400 * 1000).toISOString().slice(0, 19).replace("T", " ")}'`,
@@ -273,7 +291,7 @@ export const waterTankAdminRouter = router({
         : sql``;
 
       const [byTypeResult, totalsResult] = await Promise.all([
-        db.execute(sql`
+        dbConn.execute(sql`
           SELECT
             f.faultType,
             COUNT(*) AS count,
@@ -281,23 +299,23 @@ export const waterTankAdminRouter = router({
             MIN(f.createdAt) AS firstOccurrence
           FROM waterTankFaultLog f
           JOIN waterTankSensors s ON s.id = f.sensorId
-          WHERE s.adminId = ${input.adminId}
+          WHERE s.tenantId = ${ctx.tenantId}
             AND f.createdAt >= ${cutoff}
             ${sensorFilter}
           GROUP BY f.faultType
           ORDER BY count DESC
         `),
-        db.execute(sql`
+        dbConn.execute(sql`
           SELECT
             (SELECT COUNT(*) FROM waterTankAlertLog al
              JOIN waterTankSensors s ON s.id = al.sensorId
-             WHERE s.adminId = ${input.adminId}
+             WHERE s.tenantId = ${ctx.tenantId}
                AND al.sentAt >= ${cutoff}
                ${sensorFilterAlert}
             ) AS totalAlerts,
             (SELECT COUNT(*) FROM waterTankFaultLog f
              JOIN waterTankSensors s ON s.id = f.sensorId
-             WHERE s.adminId = ${input.adminId}
+             WHERE s.tenantId = ${ctx.tenantId}
                AND f.createdAt >= ${cutoff}
                ${sensorFilter}
             ) AS totalFaults
@@ -314,17 +332,16 @@ export const waterTankAdminRouter = router({
       };
     }),
 
-  /** Alertas recentes disparados pelos sensores do admin */
+  /** Alertas recentes disparados pelos sensores do tenant */
   listRecentAlerts: adminLocalProcedure
     .input(z.object({
-      adminId: z.number(),
       limit: z.number().default(20),
     }))
-    .query(async ({ input }) => {
-      const db = await getDb();
-      if (!db) return [];
+    .query(async ({ input, ctx }) => {
+      const dbConn = await getDb();
+      if (!dbConn) return [];
 
-      const result = await db.execute(sql`
+      const result = await dbConn.execute(sql`
         SELECT
           al.sensorId, al.tankName, c.name AS clientName,
           al.alertType, al.currentLevel, al.triggerPct,
@@ -332,7 +349,7 @@ export const waterTankAdminRouter = router({
         FROM waterTankAlertLog al
         JOIN waterTankSensors s ON s.id = al.sensorId
         JOIN clients c ON c.id = al.clientId
-        WHERE s.adminId = ${input.adminId}
+        WHERE s.tenantId = ${ctx.tenantId}
         ORDER BY al.sentAt DESC
         LIMIT ${input.limit}
       `);

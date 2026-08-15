@@ -416,13 +416,13 @@ export default function AdminWaterTanks() {
 
   const { data: pending = [], isLoading: pendingLoading, refetch: refetchPending } =
     trpc.waterTankAdmin.listPending.useQuery(
-      { adminId: adminId ?? 0 },
+      undefined,
       { enabled: !!adminId, refetchInterval: 15_000 },
     );
 
   const { data: sensors = [], isLoading: sensorsLoading, refetch: refetchSensors } =
     trpc.waterTankAdmin.listSensors.useQuery(
-      { adminId: adminId ?? 0 },
+      undefined,
       { enabled: !!adminId },
     );
 
@@ -468,13 +468,13 @@ export default function AdminWaterTanks() {
   const handleAssign: React.FormEventHandler<HTMLFormElement> = (e) => {
     e.preventDefault(); setError("");
     if (!adminId || !assignTarget || !assignForm.clientId || !assignForm.tankName.trim()) return;
-    assignMutation.mutate({ adminId, sensorId: assignTarget.id, ...parseForm(assignForm) });
+    assignMutation.mutate({ sensorId: assignTarget.id, ...parseForm(assignForm) });
   };
 
   const handleEdit: React.FormEventHandler<HTMLFormElement> = (e) => {
     e.preventDefault(); setError("");
     if (!adminId || !editTarget) return;
-    updateMutation.mutate({ adminId, sensorId: editTarget.id, ...parseForm(editForm) });
+    updateMutation.mutate({ sensorId: editTarget.id, ...parseForm(editForm) });
   };
 
   const openEdit = (s: SensorRow) => {
@@ -793,7 +793,7 @@ export default function AdminWaterTanks() {
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction
               className="bg-red-600 hover:bg-red-700"
-              onClick={() => deleteTarget && adminId && deleteMutation.mutate({ adminId, sensorId: deleteTarget.id })}
+              onClick={() => deleteTarget && adminId && deleteMutation.mutate({ sensorId: deleteTarget.id })}
               disabled={deleteMutation.isPending}
             >
               {deleteMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
