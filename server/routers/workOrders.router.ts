@@ -127,7 +127,7 @@ export const workOrdersRouter = router({
         ).catch(e => console.error("[NOTIFY] Erro ao notificar técnico na criação:", e));
       }
 
-      return { success: true, message: "OS criada com sucesso", id: osId };
+      return { success: true, message: "OS criada com sucesso", id: osId, osNumber: result?.osNumber };
     }),
 
   update: adminLocalProcedure
