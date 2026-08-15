@@ -446,6 +446,14 @@ A sub-fase 3.7.2 é **código** (não ALTER de schema), mas gera duas pendência
    UPDATE workOrders SET tenantId = 1 WHERE tenantId IS NULL;
    UPDATE inspectionTasks    SET tenantId = 1 WHERE tenantId IS NULL;
    UPDATE checklistInstances SET tenantId = 1 WHERE tenantId IS NULL;
+   -- Sub-tabelas de OS (nasciam SEM tenantId ate a leva do technicianPortal — provavel MUITO NULL em producao):
+   UPDATE workOrderTasks        SET tenantId = 1 WHERE tenantId IS NULL;
+   UPDATE workOrderMaterials    SET tenantId = 1 WHERE tenantId IS NULL;
+   UPDATE workOrderAttachments  SET tenantId = 1 WHERE tenantId IS NULL;
+   UPDATE workOrderComments     SET tenantId = 1 WHERE tenantId IS NULL;
+   UPDATE workOrderTimeTracking SET tenantId = 1 WHERE tenantId IS NULL;
+   -- Documentos:
+   UPDATE clientDocuments SET tenantId = 1 WHERE tenantId IS NULL;
    -- ... repetir para as demais tabelas operacionais que acusarem NULL
    ```
    A `3.7.1f` já prevê "garantir 0 nulls" antes do `ALTER ... NOT NULL` — este item é o lembrete concreto de que a origem dos NULLs é essa janela, não só dados legados. **Nota:** no staging (14/08) as tabelas de checklist (`inspectionTasks`, `checklistInstances`) deram **0 órfãos** — mas produção deve checar mesmo assim, pois a janela de exposição depende do momento do deploy.

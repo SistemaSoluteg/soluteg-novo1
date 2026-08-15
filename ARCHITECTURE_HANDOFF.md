@@ -801,15 +801,43 @@ Com dois routers isolados, a metodologia da 3.7.2 ficou clara o suficiente para 
 
 **Código morto identificado (candidato à próxima faxina, não removido agora):** o endpoint `inspectionTasks.complete` (concluir tarefa com assinatura de colaborador) + `completeInspectionTask` do `checklistsDb` **não são chamados por nenhuma parte do frontend** — a assinatura real vive no `workOrders.complete`. O `canComplete` é um stub que sempre retorna `true` (usado só para habilitar um botão). Ficam isolados com guarda por ora; remover numa passada de limpeza dedicada.
 
+### 8.13 Sub-fase 3.7.2 — Router `technicianPortal` + carimbo nas sub-tabelas de OS (14/08/2026)
+
+**Objetivo:** Isolar o `technicianPortal` (6º router) e fechar um acúmulo de `tenantId=NULL` nas sub-tabelas de OS.
+
+**Diagnóstico:** o `technicianPortal` **já era seguro** contra cross-tenant — todo endpoint que toca uma OS passa por `getWorkOrderByIdForTechnician(workOrderId, ctx.technicianId)`, e como um técnico pertence a um único tenant e (após o fix de FK do `assignTechnician`) só se atribui técnico do mesmo tenant, o técnico nunca alcança OS de outro tenant. **Não havia IDOR.** `getTechnicianByUsername` é o lookup do login do técnico — **global por design**.
+
+**Entregue (commit `4a35ab1`):**
+- **Parte A (defesa-em-profundidade):** `getTechnicianById(ctx.technicianId)` → `getTechnicianById(ctx.technicianId, ctx.tenantId)` (paga a dívida do `tenantId` opcional). Não alterada a assinatura de `getWorkOrderByIdForTechnician`/`getWorkOrdersByTechnicianId` (posse por `technicianId` já garante o tenant).
+- **Parte B (o valor real — carimbo nas sub-tabelas):** as 5 sub-tabelas de OS (`workOrderTasks`, `workOrderMaterials`, `workOrderAttachments`, `workOrderComments`, `workOrderTimeTracking`) têm `tenantId` mas ninguém carimbava — nasciam `NULL`. Adicionada guarda fail-closed nas 5 funções `createX` do `workOrdersAuxDb` + **9 call sites** passando `tenantId` (5 no `workOrders` admin, 2 no `technicianPortal`, 2 no `budgets`/cópia de fotos). **Não era vazamento** (acesso via OS pai), mas fecha acúmulo de NULL que a `3.7.1f` teria que limpar — achado que passou batido na isolação do `workOrders`.
+
+**Validação (staging):** `tsc` baseline (33 na época); confirmado por SQL que os sub-recursos novos nascem com `tenantId=1` (não NULL) após o deploy; regressão do fluxo admin (tarefa/anexo/comentário) e do técnico em campo OK.
+
+**Código morto identificado:** o sub-router `workOrders.timeTracking.*` inteiro + funções do `workOrdersAuxDb` — **sem caller no frontend** e tabela vazia. Feature nunca ligada. Candidato à faxina.
+
+### 8.14 Sub-fase 3.7.2 — Router `documents` isolado (14/08/2026)
+
+**Objetivo:** Isolar o acesso a `clientDocuments` (7º router). Uma tabela (`clientDocuments`, tem `tenantId`) tocada por **3 routers + 1 rota Express**.
+
+**Entregue (commit `6997ef6`, Método B):**
+- **3 routers:** `documents.*` (`listAll` por `ctx.tenantId`; `getById`/`delete` com guarda; `create` valida posse do `clientId` + carimba `tenantId`), `adminDocuments.*` e `adminProfile.adminDocuments.*` (`list` por tenant; `update`/`delete`/`updateFile` com guarda — eram IDOR puro). `documents.list` (portal do cliente) já era seguro por `ctx.clientId`.
+- **Rota Express** `DELETE /api/client-documents/:id`: resolve `tenantId` do admin via cookie e guarda a posse do documento (mesmo padrão da rota de work-orders).
+- **`db.ts`:** `getDocumentsByAdminId` → `getDocumentsByTenant` (filtro por `tenantId`); `getAllDocumentsWithFilters` passa a filtrar por `tenantId`; `createClientDocument` com fail-closed.
+- **Achado grave corrigido:** `getAllDocumentsWithFilters` tinha `adminId` no tipo dos filtros mas **nunca o aplicava numa condition** — o `documents.listAll` devolvia documentos de **todos os tenants**, sem filtro algum. Agora o `conditions` sempre começa com o filtro de tenant.
+
+**Duplicação registrada (candidata à faxina):** `adminDocuments.router` e `adminProfile.adminDocuments` são idênticos, e `deleteClientDocument` ≡ `deleteDocument` no `db.ts`. Grep no frontend confirmou que **nenhum dos dois routers duplicados tem caller** — só `trpc.documents.*` está vivo. Guardados por segurança, comentados como candidatos à remoção.
+
+**Validação (staging, `dist/index.js`):** `tsc` 32 (baseline, zero novos — o fix do `osNumber` fechou 1); ghost-probe `documents.getById` de doc do tenant 2 → `NOT_FOUND`; regressão JNC (listar/criar/deletar documento + portal do cliente) OK; backfill de `clientDocuments`.
+
 ---
 
 ## 9. O que vem pela frente
 
 ### 9.1 Sub-fase 3.7.2 — Escalar Isolamento de Queries *(🟡 EM ANDAMENTO)*
 
-**Escopo:** Aplicar o padrão de isolamento de queries, validado nos pilotos `technicians` (Método A) e `clients`/`workOrders`/`budgets`/`checklists` (Método B), para todos os demais routers da aplicação que lidam com dados operacionais.
+**Escopo:** Aplicar o padrão de isolamento de queries, validado nos pilotos `technicians` (Método A) e `clients`/`workOrders`/`budgets`/`checklists`/`technicianPortal`/`documents` (Método B), para todos os demais routers da aplicação que lidam com dados operacionais.
 
-- **Estratégia:** Isolar um router por vez, validando cada um com ghost-probe antes de avançar. Feitos: `technicians`, `clients`, `workOrders`, `budgets`, `checklists`. **Próximo: a definir** (candidatos: `technicianPortal`, `documents`, `waterTankAdmin`).
+- **Estratégia:** Isolar um router por vez, validando cada um com ghost-probe antes de avançar. Feitos: `technicians`, `clients`, `workOrders`, `budgets`, `checklists`, `technicianPortal`, `documents`. **Próximo: a definir** (candidato principal: `waterTankAdmin`; revisar os demais routers restantes).
 - **Fronteira global (catálogos compartilhados):** `checklistTemplates` não tem `tenantId` — templates ficam globais. Padrão a reaplicar: tabelas de catálogo/referência compartilhadas entre tenants não recebem guarda; comentar como "GLOBAL POR DESIGN".
 - **Padrão de guarda de FK-do-input:** ao isolar um router, além da posse do registro principal, validar **toda foreign key vinda do input** (`clientId`, `technicianId`, etc.) contra o tenant — senão dá pra referenciar registro de outro tenant e vazar PII. Lição incorporada a partir do `budgets`/`workOrders`.
 - **PDV:** As 6 tabelas de PDV (`products`, `sales`, etc.) estão **fora** do escopo, pois a funcionalidade é exclusiva da JNC.
