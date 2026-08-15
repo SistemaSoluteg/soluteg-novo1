@@ -448,7 +448,8 @@ export const workOrdersRouter = router({
           throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
         }
 
-        await auxDb.createTask(input);
+        // carimba tenantId (evita novos NULLs antes da 3.7.1f)
+        await auxDb.createTask({ ...input, tenantId: ctx.tenantId });
         return { success: true, message: "Tarefa criada com sucesso" };
       }),
 
@@ -584,7 +585,8 @@ export const workOrdersRouter = router({
           throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
         }
 
-        await auxDb.createMaterial(input);
+        // carimba tenantId (evita novos NULLs antes da 3.7.1f)
+        await auxDb.createMaterial({ ...input, tenantId: ctx.tenantId });
         return { success: true, message: "Material adicionado com sucesso" };
       }),
 
@@ -697,7 +699,8 @@ export const workOrdersRouter = router({
           throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
         }
 
-        await auxDb.createAttachment(input);
+        // carimba tenantId (evita novos NULLs antes da 3.7.1f)
+        await auxDb.createAttachment({ ...input, tenantId: ctx.tenantId });
         return { success: true, message: "Anexo adicionado com sucesso" };
       }),
 
@@ -784,7 +787,8 @@ export const workOrdersRouter = router({
           throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
         }
 
-        await auxDb.createComment(input);
+        // carimba tenantId (evita novos NULLs antes da 3.7.1f)
+        await auxDb.createComment({ ...input, tenantId: ctx.tenantId });
         return { success: true, message: "Comentário adicionado com sucesso" };
       }),
 
@@ -1212,7 +1216,8 @@ export const workOrdersRouter = router({
           throw new TRPCError({ code: "NOT_FOUND", message: "Ordem de Serviço não encontrada" });
         }
 
-        await auxDb.createTimeEntry(input);
+        // carimba tenantId (evita novos NULLs antes da 3.7.1f)
+        await auxDb.createTimeEntry({ ...input, tenantId: ctx.tenantId });
         return { success: true, message: "Entrada de tempo criada com sucesso" };
       }),
 

@@ -276,7 +276,9 @@ export const budgetsRouter = router({
         const auxDb = await import("../workOrdersAuxDb");
         const budgetPhotos = await budgetsDb.getBudgetAttachments(budget.id);
         for (const photo of budgetPhotos) {
+          // publicProcedure (sem ctx.tenantId) — usa o tenantId já carregado do orçamento pelo token.
           await auxDb.createAttachment({
+            tenantId:    budget.tenantId,
             workOrderId: osId,
             fileName:    photo.fileName,
             fileKey:     photo.fileKey,
@@ -454,6 +456,7 @@ export const budgetsRouter = router({
       const budgetPhotos = await budgetsDb.getBudgetAttachments(input.id);
       for (const photo of budgetPhotos) {
         await auxDb.createAttachment({
+          tenantId:    ctx.tenantId,
           workOrderId: osResult.id,
           fileName:    photo.fileName,
           fileKey:     photo.fileKey,

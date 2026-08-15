@@ -8,7 +8,9 @@ export const technicianPortalRouter = router({
   // Verifica se o técnico está autenticado e retorna dados básicos.
   // Usado pelo TechnicianLogin para auto-redirecionar ao portal se já logado.
   me: protectedTechnicianProcedure.query(async ({ ctx }) => {
-    const tech = await technicianDb.getTechnicianById(ctx.technicianId);
+    // Defesa-em-profundidade: technicianId já vem do JWT (não pode ser de outro tenant),
+    // mas passar tenantId aqui começa a pagar a dívida do parâmetro opcional em getTechnicianById.
+    const tech = await technicianDb.getTechnicianById(ctx.technicianId, ctx.tenantId);
     if (!tech) throw new TRPCError({ code: "NOT_FOUND", message: "Técnico não encontrado" });
     return { id: tech.id, name: tech.name };
   }),
@@ -250,7 +252,8 @@ export const technicianPortalRouter = router({
         if (os.status !== "em_andamento" && os.status !== "pausada") {
           throw new TRPCError({ code: "BAD_REQUEST", message: "A OS precisa estar em andamento para marcar tarefas." });
         }
-        const technician = await technicianDb.getTechnicianById(ctx.technicianId);
+        // Defesa-em-profundidade — ver comentário em `me`.
+        const technician = await technicianDb.getTechnicianById(ctx.technicianId, ctx.tenantId);
         const auxDb = await import("../workOrdersAuxDb");
         await auxDb.toggleTaskCompletion(
           input.taskId,
@@ -286,7 +289,9 @@ export const technicianPortalRouter = router({
           throw new TRPCError({ code: "BAD_REQUEST", message: "A OS precisa estar em andamento para adicionar comentários." });
         }
         const auxDb = await import("../workOrdersAuxDb");
+        // Posse já validada acima (getWorkOrderByIdForTechnician) — aqui só carimba o tenantId.
         await auxDb.createComment({
+          tenantId:    ctx.tenantId,
           workOrderId: input.workOrderId,
           userId:      `tecnico-${ctx.technicianId}`,
           userType:    "admin",
@@ -328,7 +333,9 @@ export const technicianPortalRouter = router({
         const auxDb = await import("../workOrdersAuxDb");
         // A coluna no banco é 'description', não 'caption' — mapeamos aqui para não depender
         // de spread que ignoraria campos desconhecidos no Drizzle.
+        // Posse já validada acima (getWorkOrderByIdForTechnician) — aqui só carimba o tenantId.
         await auxDb.createAttachment({
+          tenantId:    ctx.tenantId,
           workOrderId: input.workOrderId,
           fileName:    input.fileName,
           fileKey:     input.fileKey,

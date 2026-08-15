@@ -21,6 +21,13 @@ import {
 export async function createTask(task: InsertWorkOrderTask) {
   const db = await getDb();
   if (!db) throw new Error("Banco de dados não disponível");
+
+  // Guarda fail-closed: mesmo padrão de createWorkOrder/createInspectionTask — sem isso,
+  // a tarefa nasce com tenantId NULL e acumula dívida pra 3.7.1f.
+  if (!task.tenantId) {
+    throw new Error("createTask: tenantId é obrigatório e não foi informado.");
+  }
+
   const result = await db.insert(workOrderTasks).values(task);
   return result;
 }
@@ -88,6 +95,12 @@ export async function setTaskStatus(id: number, status: number, completedBy?: st
 export async function createMaterial(material: InsertWorkOrderMaterial) {
   const db = await getDb();
   if (!db) throw new Error("Banco de dados não disponível");
+
+  // Guarda fail-closed — ver comentário em createTask.
+  if (!material.tenantId) {
+    throw new Error("createMaterial: tenantId é obrigatório e não foi informado.");
+  }
+
   const result = await db.insert(workOrderMaterials).values(material);
   return result;
 }
@@ -144,6 +157,12 @@ export async function getTotalMaterialsCost(workOrderId: number): Promise<number
 export async function createAttachment(attachment: InsertWorkOrderAttachment) {
   const db = await getDb();
   if (!db) throw new Error("Banco de dados não disponível");
+
+  // Guarda fail-closed — ver comentário em createTask.
+  if (!attachment.tenantId) {
+    throw new Error("createAttachment: tenantId é obrigatório e não foi informado.");
+  }
+
   const result = await db.insert(workOrderAttachments).values(attachment);
   return result;
 }
@@ -229,6 +248,12 @@ export async function deleteAttachment(id: number) {
 export async function createComment(comment: InsertWorkOrderComment) {
   const db = await getDb();
   if (!db) throw new Error("Banco de dados não disponível");
+
+  // Guarda fail-closed — ver comentário em createTask.
+  if (!comment.tenantId) {
+    throw new Error("createComment: tenantId é obrigatório e não foi informado.");
+  }
+
   const result = await db.insert(workOrderComments).values(comment);
   return result;
 }
@@ -283,6 +308,12 @@ export async function deleteComment(id: number) {
 export async function createTimeEntry(entry: InsertWorkOrderTimeTracking) {
   const db = await getDb();
   if (!db) throw new Error("Banco de dados não disponível");
+
+  // Guarda fail-closed — ver comentário em createTask.
+  if (!entry.tenantId) {
+    throw new Error("createTimeEntry: tenantId é obrigatório e não foi informado.");
+  }
+
   const result = await db.insert(workOrderTimeTracking).values(entry);
   return result;
 }
