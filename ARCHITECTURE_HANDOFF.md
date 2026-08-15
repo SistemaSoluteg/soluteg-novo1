@@ -829,15 +829,29 @@ Com dois routers isolados, a metodologia da 3.7.2 ficou clara o suficiente para 
 
 **Validação (staging, `dist/index.js`):** `tsc` 32 (baseline, zero novos — o fix do `osNumber` fechou 1); ghost-probe `documents.getById` de doc do tenant 2 → `NOT_FOUND`; regressão JNC (listar/criar/deletar documento + portal do cliente) OK; backfill de `clientDocuments`.
 
+### 8.15 Sub-fase 3.7.2 — Router `waterTankAdmin` isolado (14/08/2026)
+
+**Objetivo:** Isolar o `waterTankAdmin` (8º router), que tinha o IDOR mais grave da sub-fase: **`adminId` vinha do input e era confiado** — um admin podia forjar o `adminId` de outro tenant e acessar/editar/deletar sensores dele. As 4 tabelas de caixa d'água (`waterTankSensors`, `waterTankMonitoring`, `waterTankAlertLog`, `waterTankFaultLog`) têm `tenantId`.
+
+**Particularidade — duas metades com regras opostas:**
+- **Metade admin (tRPC, tem `ctx`) — fail-closed:** `adminId` removido de todos os inputs (vem do `ctx`); filtros `adminId → tenantId` em `listSensors`/`updateSensor`/`deleteSensor`/`getSensorById`/`registerFault`/`listFaults`/`getFaultStats`/`listRecentAlerts`; `assignSensor` carimba `tenantId` e valida posse de `clientId` (`getClientById`) e `technicianId` (`getTechnicianById(id, tenantId)`); `registerFault` valida sensor e `osId` por tenant e carimba o fault log.
+- **Metade ingestão (MQTT + rota Express `POST /api/water-tank-monitoring`) — best-effort, SEM fail-closed:** `getAssignedSensorByDeviceId` passou a retornar `tenantId` (lookup por `deviceId` é global por design — é o "login" do sensor, sem `ctx`); `saveWaterTankReading` e o `INSERT` em `waterTankAlertLog` carimbam `tenantId` do sensor **se houver**, mas **nunca dropam** a leitura/alarme por `tenantId` ausente. Motivo: perder uma leitura de nível ou um alarme é risco real da Fase 1 (caixa secar/transbordar). Integridade de `tenantId` nessas tabelas vem de carimbo best-effort + backfill, não de fail-closed.
+
+**Decisão pendente registrada:** `listPending` (sensores não atribuídos, `clientId`/`tenantId` NULL) ficou **global** — pool de devices compartilhado. Não é vazamento (pendente não tem dono), mas a política de atribuição de device a tenant é assunto de fase futura (provavelmente via `platformAdmin`).
+
+**Validação (staging, ponta a ponta):** o servidor local foi apontado para o banco `_tst` e testado via HTTP real com JWT de admin — ghost-probe cross-tenant (sensor do tenant 2 invisível; update/delete no-op), FK forjada (`assignSensor` com `clientId` do tenant 2 → NOT_FOUND), ingestão simulada (carimbo best-effort, sem fail-closed), `checkAndSendAlerts` simulado gerando OS emergencial + `waterTankAlertLog` com `tenantId=1`. Backfill das 4 tabelas (`waterTankMonitoring` tinha 7.926 NULLs). Massa sintética removida ao final. `tsc` 32, zero novos.
+
+**Achados fora do escopo:** (1) drift de schema no staging — `waterTankSensors` estava sem a coluna `alertPhone2` no `_tst` (existe no `schema.ts`/produção; mesmo padrão do `client_equipment`); aplicado `ALTER` aditivo só no staging, produção não precisa. (2) a rota Express `POST /api/water-tank-monitoring` ainda aceita `adminId` do `req.body` sem validar posse (`SEC-02` no `PENDENCIAS_TECNICAS.md`) — o `tenantId` já vem do cliente real, mas o `adminId`-do-body é dívida separada.
+
 ---
 
 ## 9. O que vem pela frente
 
 ### 9.1 Sub-fase 3.7.2 — Escalar Isolamento de Queries *(🟡 EM ANDAMENTO)*
 
-**Escopo:** Aplicar o padrão de isolamento de queries, validado nos pilotos `technicians` (Método A) e `clients`/`workOrders`/`budgets`/`checklists`/`technicianPortal`/`documents` (Método B), para todos os demais routers da aplicação que lidam com dados operacionais.
+**Escopo:** Aplicar o padrão de isolamento de queries (Método B) a todos os routers que lidam com dados operacionais. **8 routers isolados:** `technicians` (Método A), `clients`, `workOrders`, `budgets`, `checklists`, `technicianPortal`, `documents`, `waterTankAdmin`.
 
-- **Estratégia:** Isolar um router por vez, validando cada um com ghost-probe antes de avançar. Feitos: `technicians`, `clients`, `workOrders`, `budgets`, `checklists`, `technicianPortal`, `documents`. **Próximo: a definir** (candidato principal: `waterTankAdmin`; revisar os demais routers restantes).
+- **Estratégia:** Isolar um router por vez, validando cada um com ghost-probe antes de avançar. **Restante após a varredura completa:** gap pontual em `clientProfile.uploadPhoto` (FK `clientId` do input sem guarda de tenant); verificar/limpar os legados `reports`/`users` (sistema `userId` do template original, provável código morto) e `pushSubscriptions`. `waterTankMonitoring`/`adminProfile` já seguros (escopados por identidade própria). `pdv`, `whatsapp`, `system`, `auth`, `adminAuth` fora do escopo (infra/auth/decisão).
 - **Fronteira global (catálogos compartilhados):** `checklistTemplates` não tem `tenantId` — templates ficam globais. Padrão a reaplicar: tabelas de catálogo/referência compartilhadas entre tenants não recebem guarda; comentar como "GLOBAL POR DESIGN".
 - **Padrão de guarda de FK-do-input:** ao isolar um router, além da posse do registro principal, validar **toda foreign key vinda do input** (`clientId`, `technicianId`, etc.) contra o tenant — senão dá pra referenciar registro de outro tenant e vazar PII. Lição incorporada a partir do `budgets`/`workOrders`.
 - **PDV:** As 6 tabelas de PDV (`products`, `sales`, etc.) estão **fora** do escopo, pois a funcionalidade é exclusiva da JNC.

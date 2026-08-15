@@ -16,6 +16,7 @@
 | ID | Onde | O que fazer |
 |---|---|---|
 | SEC-01 | `server/index.ts` | A rota `GET /api/admin-metrics` não tem autenticação e aceita `adminId` via query string, permitindo que qualquer pessoa enumere métricas de qualquer admin. Deve ser protegida com `requireAdminAuth` e usar o `adminId` do contexto. |
+| SEC-02 | `server/index.ts` | A rota `POST /api/water-tank-monitoring` (registro manual de nível) aceita `adminId` direto do `req.body` sem validar posse (`resolvedAdminId = adminId \|\| clientRecord.adminId`). Achado na isolação do `waterTankAdmin` (14/08). O `tenantId` já é carimbado a partir do cliente real (correto), mas o `adminId`-do-body deveria vir do contexto/cliente, não do body. Baixo impacto (campo denormalizado), mas fica registrado. |
 
 ---
 
