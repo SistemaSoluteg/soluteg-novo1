@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -277,8 +278,7 @@ export default function AdminCreateWorkOrderNew() {
                   </div>
                   <div>
                     <Label>Senha *</Label>
-                    <Input
-                      type="password"
+                    <PasswordInput
                       value={clientForm.password}
                       onChange={(e) => setClientForm({ ...clientForm, password: e.target.value })}
                       placeholder="••••••"

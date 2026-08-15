@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -370,8 +371,7 @@ export default function EditClient() {
               {/* Nova Senha */}
               <div className="space-y-2 md:col-span-2">
                 <label className="text-sm font-medium">Nova Senha (opcional)</label>
-                <Input
-                  type="password"
+                <PasswordInput
                   placeholder="Deixe em branco para manter a senha atual"
                   value={formData.newPassword}
                   onChange={(e) => setFormData({ ...formData, newPassword: e.target.value })}

@@ -3,6 +3,7 @@ import { trpc } from "@/lib/trpc";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -270,9 +271,8 @@ export default function AdminTechnicians() {
               {mode === "create" && (
                 <div className="space-y-2">
                   <Label htmlFor="t-password">Senha *</Label>
-                  <Input
+                  <PasswordInput
                     id="t-password"
-                    type="password"
                     value={form.password}
                     onChange={(e) => setForm({ ...form, password: e.target.value })}
                     required
@@ -350,9 +350,8 @@ export default function AdminTechnicians() {
           </DialogHeader>
           <div className="space-y-3">
             <Label htmlFor="new-pw">Nova senha</Label>
-            <Input
+            <PasswordInput
               id="new-pw"
-              type="password"
               value={newPw}
               onChange={(e) => setNewPw(e.target.value)}
               placeholder="Mínimo 6 caracteres"

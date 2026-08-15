@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -981,20 +982,17 @@ export default function ClientPortal() {
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide flex items-center gap-1.5">
               <Lock className="w-3.5 h-3.5" /> Alterar Senha
             </p>
-            <Input
-              type="password"
+            <PasswordInput
               placeholder="Senha atual"
               value={profileForm.currentPassword}
               onChange={(e) => setProfileForm({ ...profileForm, currentPassword: e.target.value })}
             />
-            <Input
-              type="password"
+            <PasswordInput
               placeholder="Nova senha (mín. 6 caracteres)"
               value={profileForm.newPassword}
               onChange={(e) => setProfileForm({ ...profileForm, newPassword: e.target.value })}
             />
-            <Input
-              type="password"
+            <PasswordInput
               placeholder="Confirmar nova senha"
               value={profileForm.confirmPassword}
               onChange={(e) => setProfileForm({ ...profileForm, confirmPassword: e.target.value })}
