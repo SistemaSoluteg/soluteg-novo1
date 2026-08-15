@@ -5,12 +5,10 @@ import {
   workOrderMaterials,
   workOrderAttachments, // Tabela onde ficam guardadas as fotos
   workOrderComments,
-  workOrderTimeTracking,
   InsertWorkOrderTask,
   InsertWorkOrderMaterial,
   InsertWorkOrderAttachment,
   InsertWorkOrderComment,
-  InsertWorkOrderTimeTracking,
 } from "../drizzle/schema";
 
 // ============================================================
@@ -298,90 +296,4 @@ export async function deleteComment(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Banco de dados não disponível");
   await db.delete(workOrderComments).where(eq(workOrderComments.id, id));
-}
-
-// ============================================================
-// SEÇÃO: CONTROLE DE TEMPO (TIMER)
-// Funções para marcar início, fim e duração do trabalho.
-// ============================================================
-
-export async function createTimeEntry(entry: InsertWorkOrderTimeTracking) {
-  const db = await getDb();
-  if (!db) throw new Error("Banco de dados não disponível");
-
-  // Guarda fail-closed — ver comentário em createTask.
-  if (!entry.tenantId) {
-    throw new Error("createTimeEntry: tenantId é obrigatório e não foi informado.");
-  }
-
-  const result = await db.insert(workOrderTimeTracking).values(entry);
-  return result;
-}
-
-// ISOLADO: usada pela guarda multi-etapa do router (entrada de tempo → workOrderId → tenant).
-export async function getTimeEntryById(id: number) {
-  const db = await getDb();
-  if (!db) return null;
-  const result = await db
-    .select()
-    .from(workOrderTimeTracking)
-    .where(eq(workOrderTimeTracking.id, id))
-    .limit(1);
-  return result[0] || null;
-}
-
-export async function getTimeEntriesByWorkOrderId(workOrderId: number) {
-  const db = await getDb();
-  if (!db) return [];
-  return await db
-    .select()
-    .from(workOrderTimeTracking)
-    .where(eq(workOrderTimeTracking.workOrderId, workOrderId))
-    .orderBy(desc(workOrderTimeTracking.startedAt));
-}
-
-export async function updateTimeEntry(id: number, updates: Partial<InsertWorkOrderTimeTracking>) {
-  const db = await getDb();
-  if (!db) throw new Error("Banco de dados não disponível");
-  await db.update(workOrderTimeTracking).set(updates).where(eq(workOrderTimeTracking.id, id));
-}
-
-/**
- * ENCERRAR TEMPO: Marca a hora final e calcula quanto tempo passou no total.
- */
-export async function endTimeEntry(id: number, endedAt: Date) {
-  const db = await getDb();
-  if (!db) throw new Error("Banco de dados não disponível");
-  
-  const entries = await db
-    .select()
-    .from(workOrderTimeTracking)
-    .where(eq(workOrderTimeTracking.id, id))
-    .limit(1);
-  
-  if (entries.length === 0) return;
-  
-  const entry = entries[0];
-  // Calcula a diferença entre agora e o início em minutos.
-  const durationMinutes = Math.floor(
-    (endedAt.getTime() - new Date(entry.startedAt).getTime()) / 1000 / 60
-  );
-  
-  await db.update(workOrderTimeTracking).set({
-    endedAt,
-    durationMinutes,
-  }).where(eq(workOrderTimeTracking.id, id));
-}
-
-export async function getTotalTimeSpent(workOrderId: number): Promise<number> {
-  const db = await getDb();
-  if (!db) return 0;
-  const entries = await getTimeEntriesByWorkOrderId(workOrderId);
-  return entries.reduce((sum, e) => sum + (e.durationMinutes || 0), 0);
-}
-
-export async function deleteTimeEntry(id: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Banco de dados não disponível");
-  await db.delete(workOrderTimeTracking).where(eq(workOrderTimeTracking.id, id));
 }

@@ -125,33 +125,6 @@ export async function updateInspectionTaskStatus(
     .where(eq(inspectionTasks.id, id));
 }
 
-export async function completeInspectionTask(
-  id: number,
-  data: {
-    collaboratorSignature: string;
-    collaboratorName: string;
-    collaboratorDocument: string;
-    clientSignature?: string;
-    clientName?: string;
-  }
-): Promise<void> {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  
-  await db
-    .update(inspectionTasks)
-    .set({
-      status: "concluida",
-      completedAt: new Date(),
-      collaboratorSignature: data.collaboratorSignature,
-      collaboratorName: data.collaboratorName,
-      collaboratorDocument: data.collaboratorDocument,
-      clientSignature: data.clientSignature || null,
-      clientName: data.clientName || null,
-    })
-    .where(eq(inspectionTasks.id, id));
-}
-
 export async function deleteInspectionTask(id: number): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -312,14 +285,6 @@ export async function getFullInspectionTask(id: number): Promise<{
   }
   
   return { task, checklists };
-}
-
-export async function areAllChecklistsComplete(inspectionTaskId: number): Promise<boolean> {
-  const checklists = await getChecklistsByInspectionTask(inspectionTaskId);
-
-  if (checklists.length === 0) return false;
-
-  return checklists.every(c => c.isComplete === 1);
 }
 
 export async function getChecklistsByWorkOrderId(workOrderId: number): Promise<ChecklistInstance[]> {

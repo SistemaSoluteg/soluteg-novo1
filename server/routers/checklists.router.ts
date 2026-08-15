@@ -136,36 +136,6 @@ export const checklistsRouter = router({
         return { success: true, message: "Status atualizado com sucesso" };
       }),
 
-    // Conclui uma tarefa de inspeção — exige que todos os checklists estejam preenchidos
-    // e registra as assinaturas do responsável e (opcionalmente) do cliente
-    complete: adminLocalProcedure // ISOLADO COM GUARDA
-      .input(z.object({
-        id: z.number(),
-        collaboratorSignature: z.string().min(1),
-        collaboratorName: z.string().min(1),
-        collaboratorDocument: z.string().min(1),
-        clientSignature: z.string().optional(),
-        clientName: z.string().optional(),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        const checklistDb = await import("../checklistsDb");
-
-        const task = await checklistDb.getInspectionTaskById(input.id);
-        if (!task || task.tenantId !== ctx.tenantId) {
-          throw new TRPCError({ code: "NOT_FOUND", message: "Tarefa de inspeção não encontrada" });
-        }
-
-        const allComplete = await checklistDb.areAllChecklistsComplete(input.id);
-        if (!allComplete) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "Todos os checklists devem estar preenchidos antes de concluir a tarefa",
-          });
-        }
-        await checklistDb.completeInspectionTask(input.id, input);
-        return { success: true, message: "Tarefa concluída com sucesso" };
-      }),
-
     // Remove uma tarefa de inspeção (e suas instâncias de checklist)
     delete: adminLocalProcedure // ISOLADO COM GUARDA
       .input(z.object({ id: z.number() }))
