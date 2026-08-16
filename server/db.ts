@@ -107,44 +107,6 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
-// Report queries
-export async function createReport(report: InsertReport) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  
-  const result = await db.insert(reports).values(report);
-  return result;
-}
-
-export async function getReportsByUserId(userId: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  
-  return await db.select().from(reports).where(eq(reports.userId, userId)).orderBy(desc(reports.createdAt));
-}
-
-export async function getReportById(id: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  
-  const result = await db.select().from(reports).where(eq(reports.id, id)).limit(1);
-  return result.length > 0 ? result[0] : null;
-}
-
-export async function updateReport(id: number, data: Partial<InsertReport>) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  
-  await db.update(reports).set(data).where(eq(reports.id, id));
-}
-
-export async function deleteReport(id: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  
-  await db.delete(reports).where(eq(reports.id, id));
-}
-
 // Invite queries
 export async function createInvite(invite: InsertInvite) {
   const db = await getDb();
@@ -174,27 +136,6 @@ export async function deleteInvite(id: number) {
   if (!db) throw new Error("Database not available");
   
   await db.delete(invites).where(eq(invites.id, id));
-}
-
-export async function getAllUsers() {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  
-  return await db.select().from(users).orderBy(desc(users.createdAt));
-}
-
-export async function deleteUser(id: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  
-  await db.delete(users).where(eq(users.id, id));
-}
-
-export async function updateUserRole(id: number, role: "user" | "admin") {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  
-  await db.update(users).set({ role }).where(eq(users.id, id));
 }
 
 
