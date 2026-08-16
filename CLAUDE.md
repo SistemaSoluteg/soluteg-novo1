@@ -70,7 +70,9 @@ Rito de sempre: prompt para a IA do terminal (Claude Code no VS Code) → revis�
 - `3.7.1f` (NOT NULL + FKs + índices) só entra depois que **todos** os routers estiverem isolados — e precisa de um backfill final de `tenantId IS NULL` antes de travar (novos NULLs podem surgir enquanto nem todo caminho de escrita tiver a guarda).
 
 ### Roadmap restante (resumo)
-3.7.2 (escalar isolamento) → 3.7.1f (NOT NULL + rotação JWT) → 3.7.3 a 3.7.8.
+3.7.2 (escalar isolamento) → 3.7.1f (NOT NULL + rotação JWT) → 3.7.3 a 3.7.8 → **3.7.9 (notificações por tenant: WhatsApp multi-instância c/ abstração + Email + Templates editáveis)**.
+
+> **3.7.9 (planejada 16/08/2026):** tira o número da JNC do hardcode e o SMTP do `.env` globais; cada tenant configura o próprio WhatsApp/email e edita as mensagens automáticas (tabela de templates c/ defaults). WhatsApp via abstração `WhatsappProvider` + `wwebjs` multi-instância (uma sessão/Chromium por tenant), com seam pra Cloud API depois. **Hoje é só JNC** — multi-tenant aqui é estrutura preparatória. Estimativa de RAM (quantos tenants o wwebjs comporta) e comandos de medição no VPS em [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDOFF.md) seção 6.5.1.
 
 Detalhamento completo em [`ROADMAP.md`](./ROADMAP.md).
 

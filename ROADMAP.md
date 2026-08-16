@@ -1,6 +1,6 @@
 # Roadmap Soluteg — Status e Próximos Passos
 
-**Última atualização:** 13/08/2026
+**Última atualização:** 16/08/2026
 **Dedicação:** ~3h/dia
 **Princípio:** uma fase por vez. Não pular. Não misturar.
 
@@ -89,8 +89,32 @@ Visão arquitetural completa em [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDO
 | 3.7.6 | Fluxo de primeiro acesso do gestor migrado | ⏳ Pendente |
 | 3.7.7 | Auditoria ativa (registrar ações sensíveis) | ⏳ Pendente |
 | 3.7.8 | Testes E2E de isolamento | ⏳ Pendente |
+| 3.7.9 | Notificações por tenant (WhatsApp multi-instância + Email + Templates editáveis) — **depois do isolamento 3.7.2** | ⏳ Pendente |
 
 > **⚠️ Ordem de execução alterada (05/08/2026):** o isolamento de queries (**3.7.2**) passou a vir **ANTES** do NOT NULL (**3.7.1f**) — repare que a tabela acima já reflete essa ordem, mesmo com os identificadores fora de sequência numérica. Motivo: o código da aplicação ainda **não popula `tenantId` nos INSERTs** (a coluna só aparece em `server/pdvSchema.ts`, em nenhum router). Aplicar NOT NULL agora quebraria toda criação de registro em runtime. Primeiro o **3.7.2** faz o código passar a ler e escrever `tenantId` em todo lugar; só **depois** o **3.7.1f** trava com NOT NULL + FKs + índices + rotação do JWT_SECRET.
+
+### Sub-fase 3.7.9 — Notificações por tenant (planejada em 16/08/2026)
+
+Hoje o envio é **global e da JNC**: um único cliente `whatsapp-web.js` ([`server/whatsapp.ts`](./server/whatsapp.ts)) com o número da JNC **hardcoded** (`5513981301010` em `sendWhatsappAlert`/`sendWhatsappAlertWithPDF`) e uma única sessão `./sessions`; SMTP único por env ([`server/emailService.ts`](./server/emailService.ts)); e as mensagens automáticas são montadas **inline** em ~15 call sites (OS, orçamento, caixa d'água, laudos, portal). Esta sub-fase transforma isso em **config por tenant**: cada tenant usa o próprio WhatsApp e email, e edita as próprias mensagens automáticas.
+
+**Decisões tomadas (16/08/2026):**
+- **WhatsApp:** abstração `WhatsappProvider` + implementação `wwebjs` multi-instância agora, com brecha (seam) pra plugar a Cloud API oficial da Meta por tenant depois. Reversível, sem custo, escala para os poucos tenants do curto prazo. (Alternativas descartadas por ora: Cloud API já — onboarding Meta pesado + custo + templates aprovados conflitam com "tenant edita msg livre"; wwebjs sem abstração — travaria numa tecnologia só.)
+- **Sequência:** entra **depois** que o isolamento de queries (3.7.2) estiver completo, para não competir com o foco atual.
+- **Templates:** tabela de templates por tenant com defaults + placeholders (não hardcode inline).
+
+**Partes:**
+
+- **3.7.9a — Config de envio por tenant.** Tabela `tenantNotificationSettings` (1:1 com `tenants`): `whatsappEnabled`, `whatsappAdminNumber` (substitui o número hardcoded), `whatsappProvider` (`'wwebjs' | 'cloud-api'`), e credenciais SMTP (`host/port/user/pass/from` + destinatários de admin). **Segredos criptografados at-rest** e nunca retornados em leitura (mascarados). Email passa a ser por tenant com cache de transporter. *(As colunas `tenants.whatsappNumber`/`contactEmail` que já existem são só de identidade/exibição — não são a infra de envio.)*
+- **3.7.9b — WhatsApp multi-instância com abstração.** Interface `WhatsappProvider` (`sendText`, `sendPdf`, `getStatus`, `reconnect`) → `WwebjsProvider` (um `Client` com `LocalAuth` em `./sessions/tenant-${id}`) → `WhatsappManager` (`Map<tenantId, provider>`, init preguiçoso só de tenants ativos com `whatsappEnabled`). As 4 funções de `whatsapp.ts` passam a receber `tenantId`; os ~15 call sites propagam (`ctx.tenantId` nos routers; `tenantId` do registro nos jobs/sensores). QR por tenant no painel. `CloudApiProvider` fica como stub (seam), não implementado agora.
+- **3.7.9c — Templates editáveis.** Tabela `messageTemplates(tenantId, key, channel, subject, body, active)` UNIQUE `(tenantId, key, channel)` + renderizador central com placeholders whitelistados por template (`{{cliente}}`, `{{numeroOS}}`, `{{tecnico}}`, `{{valor}}`…). Seed com os textos atuais como default; **fallback** pro default Soluteg quando o tenant não editou. Editor no painel do tenant. (Primeira tarefa da parte: enumerar as `key`s exatas a partir dos call sites.)
+
+**Trade-offs / riscos anotados:**
+- Cada Chromium do wwebjs consome ~300–500MB de RAM → teto do VPS Hostgator. Hoje só 2 tenants; política de init = só tenant ativo com `whatsappEnabled`. Monitorar RAM ao crescer.
+- A fragilidade do wwebjs (`detached Frame`, risco de ban — dívida técnica conhecida) é herdada, mas o isolamento por sessão **melhora** o cenário atual: uma sessão cair não derruba as outras.
+- Segredos SMTP no banco exigem cripto at-rest (chave em env) + máscara na leitura — nunca trafegar a senha de volta pro front.
+- **Migração da JNC (tenant 1):** o número hardcoded vira `whatsappAdminNumber` do tenant 1; a sessão `./sessions` atual migra pra `./sessions/tenant-1` (ou re-scan do QR). JNC precisa continuar funcionando idêntico.
+- Depende do `ctx.tenantId` já propagado (pronto desde a fundação da 3.7.2) e conecta com a Fase 3.6 (Web Push): o hub `notify()` ([`server/lib/notifications.ts`](./server/lib/notifications.ts)) já roteia canais — a metade WhatsApp passará a exigir `tenantId`.
+- Esta sub-fase é o passo concreto que habilita a migração futura wwebjs → Business API (ver "Pós-multi-tenant"): a abstração é a brecha planejada.
 
 ### Decisão de arquitetura — PDV fora do multi-tenant (05/08/2026)
 
@@ -153,7 +177,7 @@ Adiado deliberadamente: não faz sentido investir tempo numa landing comercial a
 
 ## 🔮 Pós-multi-tenant (sem fase atribuída)
 
-- Migrar WhatsApp Web.js → Business API oficial (quando viável financeiramente)
+- Migrar WhatsApp Web.js → Business API oficial (quando viável financeiramente) — a **sub-fase 3.7.9** já deixa o seam pronto (`WhatsappProvider` + campo `whatsappProvider` por tenant): trocar wwebjs por Cloud API vira uma implementação nova do provider, sem tocar nos call sites
 - Backup automatizado (cron diário + S3)
 - Observabilidade (Sentry, Better Uptime)
 - Suite de testes (Vitest, primeiro foco em isolamento de tenant)

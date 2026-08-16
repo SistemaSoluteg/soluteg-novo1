@@ -465,6 +465,59 @@ Alternativas consideradas e descartadas:
 
 **Plano:** quando viável financeiramente, migrar para WhatsApp Business API oficial (Meta).
 
+### 6.5.1 WhatsApp por tenant — abstração + wwebjs multi-instância (planejado, sub-fase 3.7.9)
+
+**Contexto:** hoje o envio é global e da JNC — um único cliente `whatsapp-web.js` ([`server/whatsapp.ts`](./server/whatsapp.ts)) com o número da JNC **hardcoded** (`5513981301010`) e uma única sessão `./sessions`. Para o multi-tenant, cada tenant precisa usar o próprio número.
+
+**Decisão (16/08/2026):** introduzir uma abstração `WhatsappProvider` e implementar `wwebjs` **multi-instância** (uma sessão/Chromium por tenant, em `./sessions/tenant-${id}`), com um seam pronto pra plugar a Cloud API oficial da Meta por tenant no futuro (`whatsappProvider: 'wwebjs' | 'cloud-api'`). Detalhe completo da sub-fase em [`ROADMAP.md`](./ROADMAP.md) (seção 3.7.9).
+
+**Importante — hoje é só JNC.** O multi-tenant é estrutura preparatória; por enquanto roda **1 tenant real (JNC) = 1 sessão wwebjs**. A RAM só vira restrição quando/se escalar. O levantamento abaixo existe para dimensionar esse futuro, não é um problema atual.
+
+#### Estimativa de RAM — quantos tenants o wwebjs comporta
+
+O gargalo do wwebjs multi-instância é **memória**: cada sessão sobe um Chromium headless (Puppeteer). O Node em si por sessão é desprezível — o custo é o Chromium.
+
+**Ainda não medido no VPS.** Os specs de RAM do VPS Hostgator não estão registrados na doc. Antes de prometer N tenants, **medir no servidor**:
+
+```bash
+# 1. RAM total e livre do VPS
+free -h
+
+# 2. Consumo atual do processo Node (app) e por processo
+pm2 monit                      # visão ao vivo por processo PM2
+ps aux --sort=-%mem | head -20 # top consumidores
+
+# 3. RSS de UMA sessão wwebjs isolada (com o zap da JNC conectado):
+#    somar o processo node + TODOS os processos chrome/chromium filhos
+ps -o rss= -C chrome -C chromium | awk '{s+=$1} END {print s/1024 " MB (chromium total)"}'
+
+# 4. Confirmar se o MySQL roda NESTE VPS ou em host separado (69.6.213.57)
+#    — se for separado, libera RAM do VPS de app
+mysqladmin -h 127.0.0.1 status 2>/dev/null && echo "MySQL local" || echo "MySQL provavelmente remoto"
+```
+
+**Fórmula:**
+
+```
+tenants_máx ≈ (RAM_total − RAM_base − RAM_reserva) ÷ RAM_por_sessão
+
+RAM_base     = SO + Node app + Nginx (+ MySQL se local)
+RAM_reserva  = folga p/ picos de sync/mídia do Chromium (~15–20% do total)
+RAM_por_sessão ≈ 300–450 MB (Chromium headless wwebjs, steady-state; pica acima em sync)
+```
+
+**Estimativa por ordem de grandeza** (assumindo MySQL **remoto**, `RAM_base ≈ 1 GB`, reserva ~15%, `RAM_por_sessão = 400 MB` conservador):
+
+| RAM do VPS | RAM p/ sessões | ~Sessões wwebjs | Leitura prática |
+|------------|----------------|-----------------|-----------------|
+| 2 GB | ~0,7 GB | **1–2** | Só JNC com folga. É o cenário de hoje. |
+| 4 GB | ~2,4 GB | **~6** | Poucos tenants; ok pro curto prazo. |
+| 8 GB | ~5,8 GB | **~14** | Teto realista do wwebjs num VPS único. |
+
+> ⚠️ Números de **ordem de grandeza**, não medição. Se o MySQL rodar no mesmo VPS, subtrair a RAM dele da base e os números caem. Picos de sync/mídia do Chromium podem exigir margem maior. **Substituir esta tabela pela medição real assim que rodar os comandos acima.**
+
+**Conclusão de arquitetura:** o wwebjs multi-instância escala para **dígitos únicos a ~baixa dezena** de tenants num VPS único — suficiente para o caso JNC + primeiros parceiros, insuficiente para SaaS de verdade. É exatamente por isso que a 3.7.9 investe na **abstração**: quando bater no teto de RAM, o caminho não é um VPS gigante, é migrar tenants para o `CloudApiProvider` (sem Chromium, RAM ~zero por tenant) — cada tenant em Cloud API **não conta** contra esse teto. Mitigações como `swap` degradam muito a latência do Puppeteer e não são saída real; evição de sessão ociosa também não ajuda (wwebjs precisa ficar conectado, e recarregar exige re-QR).
+
 ### 6.6 Cloudinary mantido
 
 **Decisão:** Cloudinary continua sendo o storage de imagens.
@@ -517,6 +570,7 @@ Cloudinary plano grátis suporta até ~20 condomínios sem custo. Pago US$89/mê
 | 3.7.6 | Fluxo de "primeiro acesso" do gestor migrado (link WhatsApp único) | ⏳ PENDENTE |
 | 3.7.7 | Auditoria ativa (registrar ações sensíveis em `auditLog`) | ⏳ PENDENTE |
 | 3.7.8 | Testes end-to-end de isolamento (tenant A NÃO acessa tenant B) | ⏳ PENDENTE |
+| 3.7.9 | Notificações por tenant (WhatsApp multi-instância c/ abstração + Email + Templates editáveis) — **só depois de 3.7.2** | ⏳ PENDENTE |
 
 ---
 
