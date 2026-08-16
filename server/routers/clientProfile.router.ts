@@ -31,7 +31,13 @@ export const clientProfileRouter = router({
       clientId: z.number(),
       imageBase64: z.string(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      // Guarda de posse (Método B): admin só pode alterar foto de cliente do próprio tenant.
+      // Sem isso, admin do tenant A sobrescreve foto e clobra o storage client_photo_${id} do tenant B.
+      const alvo = await db.getClientById(input.clientId);
+      if (!alvo || alvo.tenantId !== ctx.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Cliente não encontrado" });
+      }
       const { storagePut } = await import("../storage");
       const base64Data = input.imageBase64.replace(/^data:image\/\w+;base64,/, "");
       const buffer = Buffer.from(base64Data, "base64");
