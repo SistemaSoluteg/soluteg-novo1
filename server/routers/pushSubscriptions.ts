@@ -90,8 +90,9 @@ export const pushSubscriptionsRouter = router({
         return { success: true, action: "updated" as const };
       }
 
-      // Insere nova subscription
+      // Insere nova subscription — tenantId vem do ctx (JWT), nunca do input.
       await db.insert(pushSubscriptions).values({
+        tenantId:  ctx.tenantId,
         userId,
         userType,
         endpoint:  input.endpoint,
@@ -205,7 +206,9 @@ export const pushSubscriptionsRouter = router({
         return { success: true, action: "updated" as const };
       }
 
+      // tenantId vem do ctx (JWT), nunca do input.
       await db.insert(pushSubscriptions).values({
+        tenantId:  ctx.tenantId,
         userId,
         userType,
         endpoint:  input.endpoint,
