@@ -18,7 +18,7 @@ Este documento descreve como fazer deploy das alterações do Soluteg no VPS.
 ### 2. Conectar ao VPS
 
 ```bash
-ssh -p 22022 root@129.121.36.243
+ssh -o HostKeyAlgorithms=ssh-rsa root@129.121.36.243 -p 22022
 ```
 
 ### 3. Atualizar o Código
