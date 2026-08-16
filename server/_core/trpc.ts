@@ -74,6 +74,17 @@ export const adminLocalProcedure = t.procedure.use(
   }),
 );
 
+// PDV é exclusivo do tenant 1 (JNC) por decisão de produto — não é multi-tenant
+// (sem coluna tenantId no schema de PDV). Este portão barra qualquer outro tenant.
+// Ver ARCHITECTURE_HANDOFF, seção de dívida técnica.
+export const PDV_TENANT_ID = 1;
+export const pdvProcedure = adminLocalProcedure.use(({ ctx, next }) => {
+  if (ctx.tenantId !== PDV_TENANT_ID) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "Módulo indisponível para este tenant" });
+  }
+  return next();
+});
+
 // Middleware para autenticação do cliente (JWT cookie client_token)
 export const protectedClientProcedure = t.procedure.use(
   t.middleware(async opts => {

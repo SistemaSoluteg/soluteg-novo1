@@ -1,9 +1,9 @@
 // ============================================================
 // PDV Router — Ponto de Venda JNC Comércio e Serviços
-// Auth: adminLocalProcedure (cookie admin_token)
+// Auth: pdvProcedure (cookie admin_token)
 // DB:   TiDB Cloud (via pdvDb.ts + pdvConnection.ts)
 // ============================================================
-import { router, adminLocalProcedure } from "../_core/trpc";
+import { router, pdvProcedure } from "../_core/trpc";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import * as db from "../pdvDb";
@@ -14,24 +14,24 @@ export const pdvRouter = router({
 
   // ── CATEGORIAS ───────────────────────────────────────────
   categories: router({
-    list: adminLocalProcedure.query(async () => {
+    list: pdvProcedure.query(async () => {
       return await db.getAllCategories();
     }),
 
-    create: adminLocalProcedure
+    create: pdvProcedure
       .input(z.object({ name: z.string().min(1).max(100), description: z.string().optional() }))
       .mutation(async ({ input }) => {
         return await db.createCategory(input);
       }),
 
-    update: adminLocalProcedure
+    update: pdvProcedure
       .input(z.object({ id: z.number(), name: z.string().min(1).max(100).optional(), description: z.string().optional() }))
       .mutation(async ({ input }) => {
         const { id, ...data } = input;
         return await db.updateCategory(id, data);
       }),
 
-    delete: adminLocalProcedure
+    delete: pdvProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input }) => {
         return await db.deleteCategory(input.id);
@@ -40,33 +40,33 @@ export const pdvRouter = router({
 
   // ── PRODUTOS ─────────────────────────────────────────────
   products: router({
-    list: adminLocalProcedure.query(async () => {
+    list: pdvProcedure.query(async () => {
       return await db.getAllProducts();
     }),
 
-    getById: adminLocalProcedure
+    getById: pdvProcedure
       .input(z.object({ id: z.number() }))
       .query(async ({ input }) => {
         return await db.getProductById(input.id);
       }),
 
-    getByBarcode: adminLocalProcedure
+    getByBarcode: pdvProcedure
       .input(z.object({ barcode: z.string().length(13) }))
       .query(async ({ input }) => {
         return await db.getProductByBarcode(input.barcode);
       }),
 
-    search: adminLocalProcedure
+    search: pdvProcedure
       .input(z.object({ query: z.string() }))
       .query(async ({ input }) => {
         return await db.searchProducts(input.query);
       }),
 
-    lowStock: adminLocalProcedure.query(async () => {
+    lowStock: pdvProcedure.query(async () => {
       return await db.getLowStockProducts();
     }),
 
-    create: adminLocalProcedure
+    create: pdvProcedure
       .input(z.object({
         barcode: z.string().optional(),
         name: z.string().min(1).max(255),
@@ -106,7 +106,7 @@ export const pdvRouter = router({
         return await db.createProduct({ ...productData, barcode, imageUrl, imageKey });
       }),
 
-    update: adminLocalProcedure
+    update: pdvProcedure
       .input(z.object({
         id: z.number(),
         barcode: z.string().optional(),
@@ -143,13 +143,13 @@ export const pdvRouter = router({
         return await db.updateProduct(id, { ...data, ...(imageUrl !== undefined && { imageUrl }), ...(imageKey && { imageKey }) });
       }),
 
-    delete: adminLocalProcedure
+    delete: pdvProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input }) => {
         return await db.deleteProduct(input.id);
       }),
 
-    toggleActive: adminLocalProcedure
+    toggleActive: pdvProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input }) => {
         const product = await db.getProductById(input.id);
@@ -157,7 +157,7 @@ export const pdvRouter = router({
         return await db.toggleProductActive(input.id, !(product as any).active);
       }),
 
-    importBatch: adminLocalProcedure
+    importBatch: pdvProcedure
       .input(z.object({
         products: z.array(z.object({
           barcode: z.string().optional(),
@@ -192,11 +192,11 @@ export const pdvRouter = router({
 
   // ── VENDAS ───────────────────────────────────────────────
   sales: router({
-    list: adminLocalProcedure.query(async () => {
+    list: pdvProcedure.query(async () => {
       return await db.getAllSales();
     }),
 
-    getById: adminLocalProcedure
+    getById: pdvProcedure
       .input(z.object({ id: z.number() }))
       .query(async ({ input }) => {
         const sale = await db.getSaleById(input.id);
@@ -205,7 +205,7 @@ export const pdvRouter = router({
         return { ...sale, items };
       }),
 
-    getWithFilters: adminLocalProcedure
+    getWithFilters: pdvProcedure
       .input(z.object({
         startDate: z.string().optional(),
         endDate: z.string().optional(),
@@ -229,7 +229,7 @@ export const pdvRouter = router({
         });
       }),
 
-    create: adminLocalProcedure
+    create: pdvProcedure
       .input(z.object({
         items: z.array(z.object({
           productId: z.number(),
@@ -295,7 +295,7 @@ export const pdvRouter = router({
         return { saleId, total };
       }),
 
-    cancel: adminLocalProcedure
+    cancel: pdvProcedure
       .input(z.object({ saleId: z.number(), reason: z.string().min(1) }))
       .mutation(async ({ input, ctx }) => {
         const sale = await db.getSaleById(input.saleId);
@@ -325,15 +325,15 @@ export const pdvRouter = router({
 
   // ── FLUXO DE CAIXA ───────────────────────────────────────
   cash: router({
-    list: adminLocalProcedure.query(async () => {
+    list: pdvProcedure.query(async () => {
       return await db.getAllCashTransactions();
     }),
 
-    getBalance: adminLocalProcedure.query(async () => {
+    getBalance: pdvProcedure.query(async () => {
       return await db.getCashBalance();
     }),
 
-    createTransaction: adminLocalProcedure
+    createTransaction: pdvProcedure
       .input(z.object({
         type: z.enum(["entrada", "saida"]),
         amount: z.string().regex(/^\d+(\.\d{1,2})?$/),
@@ -346,17 +346,17 @@ export const pdvRouter = router({
 
   // ── CLIENTES PDV ─────────────────────────────────────────
   customers: router({
-    list: adminLocalProcedure.query(async () => {
+    list: pdvProcedure.query(async () => {
       return await db.getAllCustomers();
     }),
 
-    search: adminLocalProcedure
+    search: pdvProcedure
       .input(z.object({ query: z.string() }))
       .query(async ({ input }) => {
         return await db.searchCustomers(input.query);
       }),
 
-    create: adminLocalProcedure
+    create: pdvProcedure
       .input(z.object({
         name: z.string().min(1).max(255),
         cpfCnpj: z.string().max(18).optional(),
@@ -367,7 +367,7 @@ export const pdvRouter = router({
         return await db.createCustomer(input);
       }),
 
-    update: adminLocalProcedure
+    update: pdvProcedure
       .input(z.object({
         id: z.number(),
         name: z.string().min(1).max(255).optional(),
@@ -380,7 +380,7 @@ export const pdvRouter = router({
         return await db.updateCustomer(id, data);
       }),
 
-    delete: adminLocalProcedure
+    delete: pdvProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input }) => {
         return await db.deleteCustomer(input.id);
@@ -389,14 +389,14 @@ export const pdvRouter = router({
 
   // ── DASHBOARD ────────────────────────────────────────────
   dashboard: router({
-    stats: adminLocalProcedure.query(async () => {
+    stats: pdvProcedure.query(async () => {
       return await db.getDashboardStats();
     }),
   }),
 
   // ── BACKUP ───────────────────────────────────────────────
   backup: router({
-    generate: adminLocalProcedure.mutation(async () => {
+    generate: pdvProcedure.mutation(async () => {
       const backupData = await db.generateFullBackup();
       const jsonContent = JSON.stringify(backupData, null, 2);
       const filename = `backup-pdv-${new Date().toISOString().split("T")[0]}-${Date.now()}.json`;
@@ -413,12 +413,12 @@ export const pdvRouter = router({
   // ── MIGRAÇÃO TIDB → MYSQL ────────────────────────────────
   migrate: router({
     /** Verifica se PDV_DATABASE_URL está configurada no servidor */
-    checkTidb: adminLocalProcedure.query(() => {
+    checkTidb: pdvProcedure.query(() => {
       return { available: !!process.env.PDV_DATABASE_URL };
     }),
 
     /** Copia todos os dados do TiDB Cloud para o MySQL principal */
-    fromTidb: adminLocalProcedure.mutation(async () => {
+    fromTidb: pdvProcedure.mutation(async () => {
       const tidbUrl = process.env.PDV_DATABASE_URL;
       if (!tidbUrl) {
         throw new TRPCError({
@@ -485,11 +485,11 @@ export const pdvRouter = router({
 
   // ── CÓDIGO DE BARRAS ─────────────────────────────────────
   barcode: router({
-    generate: adminLocalProcedure.mutation(() => {
+    generate: pdvProcedure.mutation(() => {
       return { barcode: generateEAN13() };
     }),
 
-    getImage: adminLocalProcedure
+    getImage: pdvProcedure
       .input(z.object({ barcode: z.string().min(1).max(30) }))
       .query(async ({ input }) => {
         const imageBuffer = await generateBarcodeImage(input.barcode);
