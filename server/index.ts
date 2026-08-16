@@ -677,59 +677,11 @@ async function startServer() {
 
 
   // ============================================================
-  // 📊 ROTA: Métricas do Dashboard Admin
-  // Endereço: GET /api/admin-metrics?adminId=X
+  // 📊 Métricas do Dashboard Admin — MIGRADO para tRPC (SEC-01 fechado).
+  // Antes: GET /api/admin-metrics?adminId=X (sem auth, adminId da query).
+  // Agora: trpc.adminMetrics.getDashboard (adminId/tenant do JWT).
+  // Ver server/routers/adminMetrics.router.ts.
   // ============================================================
-  app.get("/api/admin-metrics", async (req, res) => {
-    try {
-      const adminId = parseInt(req.query.adminId as string);
-      if (!adminId) {
-        return res.status(400).json({ message: "adminId é obrigatório" });
-      }
-
-      const { getDb } = await import("./db");
-      const { clients, clientDocuments, workOrders } = await import("../drizzle/schema");
-      const { eq, and, count, sql } = await import("drizzle-orm");
-
-      const db = await getDb();
-      if (!db) {
-        return res.status(500).json({ message: "Banco de dados indisponível" });
-      }
-
-      const [totalClientsResult] = await db
-        .select({ total: count() })
-        .from(clients)
-        .where(eq(clients.adminId, adminId));
-
-      const [activeClientsResult] = await db
-        .select({ total: count() })
-        .from(clients)
-        .where(and(eq(clients.adminId, adminId), eq(clients.active, 1)));
-
-      const [openWorkOrdersResult] = await db
-        .select({ total: count() })
-        .from(workOrders)
-        .where(and(
-          eq(workOrders.adminId, adminId),
-          sql`${workOrders.status} NOT IN ('concluida', 'cancelada')`
-        ));
-
-      const [totalDocumentsResult] = await db
-        .select({ total: count() })
-        .from(clientDocuments)
-        .where(eq(clientDocuments.adminId, adminId));
-
-      res.json({
-        totalClients: totalClientsResult?.total ?? 0,
-        activeClients: activeClientsResult?.total ?? 0,
-        openWorkOrders: openWorkOrdersResult?.total ?? 0,
-        totalDocuments: totalDocumentsResult?.total ?? 0,
-      });
-    } catch (error) {
-      console.error("Erro ao carregar métricas:", error);
-      res.status(500).json({ message: "Erro ao carregar métricas" });
-    }
-  });
 
 
   // ============================================================
@@ -740,11 +692,15 @@ async function startServer() {
   // Sempre que um sensor publicar via MQTT, o servidor empurra
   // um evento JSON para todos os clientes conectados com aquele clientId.
   // ============================================================
-  app.get("/api/water-tank-sse", (req, res) => {
-    const clientId = parseInt(req.query.clientId as string);
-    if (!clientId) {
-      return res.status(400).json({ message: "clientId é obrigatório" });
+  // 3.7.2: clientId vem do JWT do cliente (cookie client_token, enviado pelo
+  // EventSource same-origin) — NUNCA da query. Antes, qualquer um passava
+  // ?clientId=N e recebia o stream de leituras/alarmes de outro cliente/tenant.
+  app.get("/api/water-tank-sse", requireClientAuth, (req, res) => {
+    const payload = verifyClientToken(parseCookies(req)["client_token"]);
+    if (!payload) {
+      return res.status(401).json({ message: "Não autorizado" });
     }
+    const clientId = payload.clientId;
 
     res.set({
       "Content-Type": "text/event-stream",

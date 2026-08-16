@@ -2,8 +2,6 @@ import { systemRouter } from "./_core/systemRouter";
 import { router } from "./_core/trpc";
 
 import { authRouter } from "./routers/auth.router";
-import { reportsRouter } from "./routers/reports.router";
-import { usersRouter } from "./routers/users.router";
 import { adminAuthRouter } from "./routers/adminAuth.router";
 import { clientsRouter } from "./routers/clients.router";
 import { documentsRouter } from "./routers/documents.router";
@@ -20,12 +18,11 @@ import { pdvRouter } from "./routers/pdv.router";
 import { laudosRouter } from "./routers/laudos.router";
 import { whatsappRouter } from "./routers/whatsapp.router";
 import { pushSubscriptionsRouter } from "./routers/pushSubscriptions";
+import { adminMetricsRouter } from "./routers/adminMetrics.router";
 
 export const appRouter = router({
   system: systemRouter,
   auth: authRouter,
-  reports: reportsRouter,
-  users: usersRouter,
   adminAuth: adminAuthRouter,
   clients: clientsRouter,
   documents: documentsRouter,
@@ -42,6 +39,7 @@ export const appRouter = router({
   laudos: laudosRouter,
   whatsapp: whatsappRouter,
   pushSubscriptions: pushSubscriptionsRouter,
+  adminMetrics: adminMetricsRouter,
 });
 
 export type AppRouter = typeof appRouter;

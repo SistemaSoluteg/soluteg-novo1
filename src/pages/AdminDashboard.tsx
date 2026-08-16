@@ -37,12 +37,6 @@ export default function AdminDashboard() {
   const [, setLocation] = useLocation();
   const [adminId, setAdminId] = useState<number | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [metrics, setMetrics] = useState({
-    totalClients: 0,
-    openWorkOrders: 0,
-    totalDocuments: 0,
-    activeClients: 0,
-  });
 
   useEffect(() => {
     const id = localStorage.getItem("adminId");
@@ -52,7 +46,6 @@ export default function AdminDashboard() {
     }
     const parsed = parseInt(id);
     setAdminId(parsed);
-    loadMetrics(parsed);
   }, []);
 
   useEffect(() => {
@@ -85,17 +78,9 @@ export default function AdminDashboard() {
     (a) => Date.now() - new Date(a.sentAt).getTime() < 86_400_000,
   ).length;
 
-  const loadMetrics = async (id: number) => {
-    try {
-      const response = await fetch(`/api/admin-metrics?adminId=${id}`);
-      if (response.ok) {
-        const data = await response.json();
-        setMetrics(data);
-      }
-    } catch (error) {
-      console.error("Erro ao carregar métricas:", error);
-    }
-  };
+  // Métricas do dashboard via tRPC autenticado (adminId/tenant vêm do JWT, não do input).
+  const { data: metrics = { totalClients: 0, openWorkOrders: 0, totalDocuments: 0, activeClients: 0 } } =
+    trpc.adminMetrics.getDashboard.useQuery(undefined, { enabled: !!adminId });
 
   const metricCards = [
     {
