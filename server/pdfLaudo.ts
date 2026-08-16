@@ -93,7 +93,8 @@ export async function generateLaudoPDF(laudoId: number): Promise<Buffer> {
   const laudo = await getLaudoById(laudoId);
   if (!laudo) throw new Error("Laudo não encontrado");
 
-  const tecnico = await getConfiguracoesTecnico();
+  // Config do técnico é por tenant — deriva do próprio laudo.
+  const tecnico = await getConfiguracoesTecnico(laudo.tenantId as number);
   const logoPath = findLogoPath();
 
   // Carrega tipos dinâmicos para rótulo e aviso_legal no PDF

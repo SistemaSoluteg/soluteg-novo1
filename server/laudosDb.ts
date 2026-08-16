@@ -69,6 +69,7 @@ export async function generateLaudoNumero(): Promise<string> {
 // ── CRUD Laudos ──────────────────────────────────────────────────────────────
 
 export async function listLaudos(params: {
+  tenantId: number; // 3.7.2: escopo de tenant obrigatório (fail-closed)
   tipo?: string;
   status?: string;
   clienteId?: number;
@@ -79,6 +80,9 @@ export async function listLaudos(params: {
 }) {
   const db = await getDb();
   if (!db) return [];
+
+  // Fail-closed: nunca listar laudos sem escopo de tenant.
+  if (params.tenantId == null) throw new Error("listLaudos: tenantId obrigatório");
 
   const { clients } = await import("../drizzle/schema");
 
@@ -102,7 +106,7 @@ export async function listLaudos(params: {
     laudoIdsFiltro = todos;
   }
 
-  const conditions: any[] = [];
+  const conditions: any[] = [eq(laudos.tenantId, params.tenantId)];
 
   if (params.tipo) conditions.push(eq(laudos.tipo, params.tipo as any));
   if (params.status) conditions.push(eq(laudos.status, params.status as any));
@@ -157,6 +161,7 @@ export async function getLaudoById(id: number) {
   const [laudo] = await db
     .select({
       id: laudos.id,
+      tenantId: laudos.tenantId,
       numero: laudos.numero,
       tipo: laudos.tipo,
       titulo: laudos.titulo,
@@ -228,6 +233,7 @@ export async function getLaudoById(id: number) {
 }
 
 export async function createLaudo(data: {
+  tenantId: number; // 3.7.2: fail-closed
   tipo: string;
   titulo: string;
   clienteId?: number;
@@ -239,9 +245,13 @@ export async function createLaudo(data: {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
+  // Fail-closed: nunca gravar laudo sem tenant (evita órfão tenantId=NULL).
+  if (data.tenantId == null) throw new Error("createLaudo: tenantId obrigatório");
+
   const numero = await generateLaudoNumero();
 
   await db.insert(laudos).values({
+    tenantId: data.tenantId,
     numero,
     tipo: data.tipo as any,
     titulo: data.titulo,
@@ -330,6 +340,7 @@ export async function getLaudoFotoById(id: number) {
 }
 
 export async function addLaudoFoto(data: {
+  tenantId: number; // 3.7.2: fail-closed
   laudoId: number;
   url: string;
   legenda?: string;
@@ -340,7 +351,10 @@ export async function addLaudoFoto(data: {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
+  if (data.tenantId == null) throw new Error("addLaudoFoto: tenantId obrigatório");
+
   await db.insert(laudoFotos).values({
+    tenantId: data.tenantId,
     laudoId: data.laudoId,
     url: data.url,
     legenda: data.legenda ?? null,
@@ -395,6 +409,7 @@ export async function removeLaudoFoto(id: number) {
 // ── Medições ─────────────────────────────────────────────────────────────────
 
 export async function addLaudoMedicao(data: {
+  tenantId: number; // 3.7.2: fail-closed
   laudoId: number;
   descricao: string;
   unidade?: string;
@@ -406,7 +421,10 @@ export async function addLaudoMedicao(data: {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
+  if (data.tenantId == null) throw new Error("addLaudoMedicao: tenantId obrigatório");
+
   await db.insert(laudoMedicoes).values({
+    tenantId: data.tenantId,
     laudoId: data.laudoId,
     descricao: data.descricao,
     unidade: data.unidade ?? null,
@@ -415,6 +433,17 @@ export async function addLaudoMedicao(data: {
     resultado: data.resultado ?? null,
     ordem: data.ordem ?? 0,
   });
+}
+
+export async function getLaudoMedicaoById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [medicao] = await db
+    .select()
+    .from(laudoMedicoes)
+    .where(eq(laudoMedicoes.id, id))
+    .limit(1);
+  return medicao ?? null;
 }
 
 export async function removeLaudoMedicao(id: number) {
@@ -448,6 +477,7 @@ export async function getLaudoTecnicos(laudoId: number) {
 }
 
 export async function atribuirTecnico(data: {
+  tenantId: number; // 3.7.2: fail-closed
   laudoId: number;
   tecnicoId: number;
   atribuidoPor?: number;
@@ -455,9 +485,12 @@ export async function atribuirTecnico(data: {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
+  if (data.tenantId == null) throw new Error("atribuirTecnico: tenantId obrigatório");
+
   // INSERT IGNORE equivalente — tenta inserir, ignora duplicata
   try {
     await db.insert(laudoTecnicos).values({
+      tenantId: data.tenantId,
       laudoId: data.laudoId,
       tecnicoId: data.tecnicoId,
       atribuidoPor: data.atribuidoPor ?? null,
@@ -479,20 +512,25 @@ export async function removerTecnico(laudoId: number, tecnicoId: number) {
 
 // ── Configurações do Técnico ─────────────────────────────────────────────────
 
-export async function getConfiguracoesTecnico() {
+// 3.7.2: configuracoesTecnico tem tenantId — é config por tenant (cabeçalho do
+// PDF, CRT, empresa), NÃO catálogo compartilhado. Escopar por tenant.
+export async function getConfiguracoesTecnico(tenantId: number) {
   const db = await getDb();
   if (!db) return null;
+
+  if (tenantId == null) throw new Error("getConfiguracoesTecnico: tenantId obrigatório");
 
   const [config] = await db
     .select()
     .from(configuracoesTecnico)
+    .where(eq(configuracoesTecnico.tenantId, tenantId))
     .orderBy(configuracoesTecnico.id)
     .limit(1);
 
   return config ?? null;
 }
 
-export async function upsertConfiguracoesTecnico(data: {
+export async function upsertConfiguracoesTecnico(tenantId: number, data: {
   nomeCompleto?: string;
   registroCrt?: string;
   especialidade?: string;
@@ -502,14 +540,16 @@ export async function upsertConfiguracoesTecnico(data: {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const existing = await getConfiguracoesTecnico();
+  if (tenantId == null) throw new Error("upsertConfiguracoesTecnico: tenantId obrigatório");
+
+  const existing = await getConfiguracoesTecnico(tenantId);
   if (existing) {
     await db
       .update(configuracoesTecnico)
       .set(data as any)
       .where(eq(configuracoesTecnico.id, existing.id));
   } else {
-    await db.insert(configuracoesTecnico).values(data as any);
+    await db.insert(configuracoesTecnico).values({ ...data, tenantId } as any);
   }
 }
 
@@ -672,6 +712,7 @@ export async function getLaudoCitacaoById(id: number) {
  * Retorna o id inserido.
  */
 export async function addLaudoCitacao(data: {
+  tenantId: number; // 3.7.2: fail-closed
   laudoId: number;
   trechoId?: number;
   normaCodigo: string;
@@ -684,7 +725,10 @@ export async function addLaudoCitacao(data: {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
+  if (data.tenantId == null) throw new Error("addLaudoCitacao: tenantId obrigatório");
+
   await db.insert(laudoCitacoes).values({
+    tenantId: data.tenantId,
     laudoId: data.laudoId,
     trechoId: data.trechoId ?? null,
     normaCodigo: data.normaCodigo,

@@ -1,9 +1,39 @@
-import { adminLocalProcedure, protectedTechnicianProcedure, publicProcedure, router } from "../_core/trpc";
+import { adminLocalProcedure, protectedTechnicianProcedure, router } from "../_core/trpc";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 
+// ── Helpers de isolamento por tenant (3.7.2, Método B) ────────────────────────
+// Carrega o laudo e confirma que pertence ao tenant do chamador. Usado como
+// guarda de posse em todo endpoint que recebe id/laudoId do input.
+async function carregarLaudoDoTenant(laudoId: number, tenantId: number) {
+  const ldb = await import("../laudosDb");
+  const laudo = await ldb.getLaudoById(laudoId);
+  if (!laudo || laudo.tenantId !== tenantId) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Laudo não encontrado" });
+  }
+  return laudo;
+}
+
+// Valida FK clienteId vinda do input contra o tenant (evita referenciar PII de outro tenant).
+async function assertClienteDoTenant(clienteId: number, tenantId: number) {
+  const sdb = await import("../db");
+  const cliente = await sdb.getClientById(clienteId);
+  if (!cliente || cliente.tenantId !== tenantId) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Cliente não encontrado" });
+  }
+}
+
+// Valida FK tecnicoId vinda do input contra o tenant.
+async function assertTecnicoDoTenant(tecnicoId: number, tenantId: number) {
+  const tdb = await import("../technicianDb");
+  const tecnico = await tdb.getTechnicianById(tecnicoId, tenantId);
+  if (!tecnico) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Técnico não encontrado" });
+  }
+}
+
 export const laudosRouter = router({
-  // ── Listar laudos (admin: todos; técnico: só os seus) ──────────────────────
+  // ── Listar laudos (admin: todos do tenant; técnico: só os seus) ────────────
   list: adminLocalProcedure
     .input(z.object({
       tipo: z.string().optional(),
@@ -11,9 +41,9 @@ export const laudosRouter = router({
       clienteId: z.number().optional(),
       search: z.string().optional(),
     }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const db = await import("../laudosDb");
-      return await db.listLaudos(input);
+      return await db.listLaudos({ ...input, tenantId: ctx.tenantId });
     }),
 
   listTecnico: protectedTechnicianProcedure
@@ -26,6 +56,7 @@ export const laudosRouter = router({
       const db = await import("../laudosDb");
       return await db.listLaudos({
         ...input,
+        tenantId: ctx.tenantId,
         tecnicoId: ctx.technicianId,
       });
     }),
@@ -33,19 +64,14 @@ export const laudosRouter = router({
   // ── Buscar por ID ──────────────────────────────────────────────────────────
   getById: adminLocalProcedure
     .input(z.object({ id: z.number() }))
-    .query(async ({ input }) => {
-      const db = await import("../laudosDb");
-      const laudo = await db.getLaudoById(input.id);
-      if (!laudo) throw new TRPCError({ code: "NOT_FOUND", message: "Laudo não encontrado" });
-      return laudo;
+    .query(async ({ input, ctx }) => {
+      return await carregarLaudoDoTenant(input.id, ctx.tenantId);
     }),
 
   getByIdTecnico: protectedTechnicianProcedure
     .input(z.object({ id: z.number() }))
     .query(async ({ input, ctx }) => {
-      const db = await import("../laudosDb");
-      const laudo = await db.getLaudoById(input.id);
-      if (!laudo) throw new TRPCError({ code: "NOT_FOUND", message: "Laudo não encontrado" });
+      const laudo = await carregarLaudoDoTenant(input.id, ctx.tenantId);
       const foiCriadorDoLaudo = laudo.criadoPor === ctx.technicianId;
       const tecnicoAtribuido = laudo.tecnicos?.some((t: any) => t.tecnicoId === ctx.technicianId);
       if (!foiCriadorDoLaudo && !tecnicoAtribuido) {
@@ -67,9 +93,11 @@ export const laudosRouter = router({
       })).optional(),
     }))
     .mutation(async ({ input, ctx }) => {
+      if (input.clienteId != null) await assertClienteDoTenant(input.clienteId, ctx.tenantId);
       const db = await import("../laudosDb");
       const result = await db.createLaudo({
         ...input,
+        tenantId: ctx.tenantId,
         criadoPor: ctx.adminId,
         criadoPorTipo: "admin",
       });
@@ -88,14 +116,16 @@ export const laudosRouter = router({
       })).optional(),
     }))
     .mutation(async ({ input, ctx }) => {
+      if (input.clienteId != null) await assertClienteDoTenant(input.clienteId, ctx.tenantId);
       const db = await import("../laudosDb");
       const result = await db.createLaudo({
         ...input,
+        tenantId: ctx.tenantId,
         criadoPor: ctx.technicianId,
         criadoPorTipo: "tecnico",
       });
       // Auto-atribui o técnico ao laudo que ele mesmo criou
-      await db.atribuirTecnico({ laudoId: result.id, tecnicoId: ctx.technicianId });
+      await db.atribuirTecnico({ tenantId: ctx.tenantId, laudoId: result.id, tecnicoId: ctx.technicianId });
       return { success: true, ...result };
     }),
 
@@ -127,7 +157,9 @@ export const laudosRouter = router({
       validadeMeses: z.number().optional(),
       dataInspecao: z.string().nullable().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      await carregarLaudoDoTenant(input.id, ctx.tenantId);
+      if (input.clienteId != null) await assertClienteDoTenant(input.clienteId, ctx.tenantId);
       const { id, dataInspecao, ...rest } = input;
       const db = await import("../laudosDb");
       await db.updateLaudo(id, {
@@ -166,8 +198,7 @@ export const laudosRouter = router({
     }))
     .mutation(async ({ input, ctx }) => {
       const db = await import("../laudosDb");
-      const laudo = await db.getLaudoById(input.id);
-      if (!laudo) throw new TRPCError({ code: "NOT_FOUND", message: "Laudo não encontrado" });
+      const laudo = await carregarLaudoDoTenant(input.id, ctx.tenantId);
       const foiCriadorDoLaudo = laudo.criadoPor === ctx.technicianId;
       const tecnicoAtribuido = laudo.tecnicos?.some((t: any) => t.tecnicoId === ctx.technicianId);
       if (!foiCriadorDoLaudo && !tecnicoAtribuido) {
@@ -176,6 +207,7 @@ export const laudosRouter = router({
       if (laudo.status !== "rascunho") {
         throw new TRPCError({ code: "FORBIDDEN", message: "Laudo finalizado não pode ser editado" });
       }
+      if (input.clienteId != null) await assertClienteDoTenant(input.clienteId, ctx.tenantId);
       const { id, dataInspecao, ...rest } = input;
       await db.updateLaudo(id, {
         ...rest,
@@ -187,13 +219,12 @@ export const laudosRouter = router({
   // ── Deletar laudo (somente rascunho, somente admin) ───────────────────────
   delete: adminLocalProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
-      const db = await import("../laudosDb");
-      const laudo = await db.getLaudoById(input.id);
-      if (!laudo) throw new TRPCError({ code: "NOT_FOUND", message: "Laudo não encontrado" });
+    .mutation(async ({ input, ctx }) => {
+      const laudo = await carregarLaudoDoTenant(input.id, ctx.tenantId);
       if (laudo.status !== "rascunho") {
         throw new TRPCError({ code: "FORBIDDEN", message: "Apenas laudos em rascunho podem ser excluídos" });
       }
+      const db = await import("../laudosDb");
       await db.deleteLaudo(input.id);
       return { success: true };
     }),
@@ -201,10 +232,9 @@ export const laudosRouter = router({
   // ── Finalizar laudo ────────────────────────────────────────────────────────
   finalize: adminLocalProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      await carregarLaudoDoTenant(input.id, ctx.tenantId);
       const db = await import("../laudosDb");
-      const laudo = await db.getLaudoById(input.id);
-      if (!laudo) throw new TRPCError({ code: "NOT_FOUND", message: "Laudo não encontrado" });
       await db.updateLaudo(input.id, { status: "finalizado" } as any);
       return { success: true };
     }),
@@ -219,9 +249,10 @@ export const laudosRouter = router({
       classificacao: z.enum(["conforme", "nao_conforme", "atencao"]).optional(),
       ordem: z.number().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      await carregarLaudoDoTenant(input.laudoId, ctx.tenantId);
       const db = await import("../laudosDb");
-      await db.addLaudoFoto(input);
+      await db.addLaudoFoto({ ...input, tenantId: ctx.tenantId });
       return { success: true };
     }),
 
@@ -236,14 +267,13 @@ export const laudosRouter = router({
     }))
     .mutation(async ({ input, ctx }) => {
       const db = await import("../laudosDb");
-      const laudo = await db.getLaudoById(input.laudoId);
-      if (!laudo) throw new TRPCError({ code: "NOT_FOUND", message: "Laudo não encontrado" });
+      const laudo = await carregarLaudoDoTenant(input.laudoId, ctx.tenantId);
       const foiCriadorDoLaudo = laudo.criadoPor === ctx.technicianId;
       const tecnicoAtribuido = laudo.tecnicos?.some((t: any) => t.tecnicoId === ctx.technicianId);
       if (!foiCriadorDoLaudo && !tecnicoAtribuido) {
         throw new TRPCError({ code: "FORBIDDEN", message: "Acesso negado" });
       }
-      await db.addLaudoFoto(input);
+      await db.addLaudoFoto({ ...input, tenantId: ctx.tenantId });
       return { success: true };
     }),
 
@@ -260,9 +290,12 @@ export const laudosRouter = router({
       modoLayout: z.enum(["normal", "destaque", "destaque_duplo", "original_zoom", "anotada"]).optional(),
       anotacoesJson: z.string().max(200000).optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const { id, ...data } = input;
       const db = await import("../laudosDb");
+      const foto = await db.getLaudoFotoById(id);
+      if (!foto) throw new TRPCError({ code: "NOT_FOUND", message: "Foto não encontrada" });
+      await carregarLaudoDoTenant(foto.laudoId, ctx.tenantId);
       await db.updateLaudoFoto(id, data as any);
       return { success: true };
     }),
@@ -285,8 +318,7 @@ export const laudosRouter = router({
       const db = await import("../laudosDb");
       const foto = await db.getLaudoFotoById(id);
       if (!foto) throw new TRPCError({ code: "NOT_FOUND", message: "Foto não encontrada" });
-      const laudo = await db.getLaudoById(foto.laudoId);
-      if (!laudo) throw new TRPCError({ code: "NOT_FOUND", message: "Laudo não encontrado" });
+      const laudo = await carregarLaudoDoTenant(foto.laudoId, ctx.tenantId);
       const foiCriadorDoLaudo = laudo.criadoPor === ctx.technicianId;
       const tecnicoAtribuido = laudo.tecnicos?.some((t: any) => t.tecnicoId === ctx.technicianId);
       if (!foiCriadorDoLaudo && !tecnicoAtribuido) {
@@ -298,8 +330,11 @@ export const laudosRouter = router({
 
   removeFoto: adminLocalProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await import("../laudosDb");
+      const foto = await db.getLaudoFotoById(input.id);
+      if (!foto) throw new TRPCError({ code: "NOT_FOUND", message: "Foto não encontrada" });
+      await carregarLaudoDoTenant(foto.laudoId, ctx.tenantId);
       await db.removeLaudoFoto(input.id);
       return { success: true };
     }),
@@ -315,16 +350,20 @@ export const laudosRouter = router({
       resultado: z.enum(["aprovado", "reprovado"]).optional(),
       ordem: z.number().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      await carregarLaudoDoTenant(input.laudoId, ctx.tenantId);
       const db = await import("../laudosDb");
-      await db.addLaudoMedicao(input);
+      await db.addLaudoMedicao({ ...input, tenantId: ctx.tenantId });
       return { success: true };
     }),
 
   removeMedicao: adminLocalProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await import("../laudosDb");
+      const medicao = await db.getLaudoMedicaoById(input.id);
+      if (!medicao) throw new TRPCError({ code: "NOT_FOUND", message: "Medição não encontrada" });
+      await carregarLaudoDoTenant(medicao.laudoId, ctx.tenantId);
       await db.removeLaudoMedicao(input.id);
       return { success: true };
     }),
@@ -336,10 +375,10 @@ export const laudosRouter = router({
       tecnicoId: z.number(),
     }))
     .mutation(async ({ input, ctx }) => {
+      await carregarLaudoDoTenant(input.laudoId, ctx.tenantId);
+      await assertTecnicoDoTenant(input.tecnicoId, ctx.tenantId);
       const db = await import("../laudosDb");
-      const laudo = await db.getLaudoById(input.laudoId);
-      if (!laudo) throw new TRPCError({ code: "NOT_FOUND", message: "Laudo não encontrado" });
-      await db.atribuirTecnico({ laudoId: input.laudoId, tecnicoId: input.tecnicoId, atribuidoPor: ctx.adminId });
+      await db.atribuirTecnico({ tenantId: ctx.tenantId, laudoId: input.laudoId, tecnicoId: input.tecnicoId, atribuidoPor: ctx.adminId });
       return { success: true };
     }),
 
@@ -348,7 +387,8 @@ export const laudosRouter = router({
       laudoId: z.number(),
       tecnicoId: z.number(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      await carregarLaudoDoTenant(input.laudoId, ctx.tenantId);
       const db = await import("../laudosDb");
       await db.removerTecnico(input.laudoId, input.tecnicoId);
       return { success: true };
@@ -357,11 +397,10 @@ export const laudosRouter = router({
   // ── Gerar PDF ──────────────────────────────────────────────────────────────
   generatePdf: adminLocalProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      const laudo = await carregarLaudoDoTenant(input.id, ctx.tenantId);
       const { generateLaudoPDF } = await import("../pdfLaudo");
       const pdfBuffer = await generateLaudoPDF(input.id);
-      const db = await import("../laudosDb");
-      const laudo = await db.getLaudoById(input.id);
       return {
         success: true,
         pdf: pdfBuffer.toString("base64"),
@@ -370,6 +409,7 @@ export const laudosRouter = router({
     }),
 
   // ── Tipos de laudo dinâmicos ──────────────────────────────────────────────
+  // GLOBAL POR DESIGN: laudoTipos é catálogo compartilhado (sem tenantId).
 
   // Admin: lista todos os tipos ativos ordenados por `ordem`
   "tiposLaudo.list": adminLocalProcedure
@@ -386,6 +426,7 @@ export const laudosRouter = router({
     }),
 
   // ── Biblioteca de normas ──────────────────────────────────────────────────
+  // GLOBAL POR DESIGN: normasBiblioteca é catálogo compartilhado (sem tenantId).
   listNormasBiblioteca: adminLocalProcedure
     .input(z.object({ tipoLaudo: z.string().optional() }))
     .query(async ({ input }) => {
@@ -401,6 +442,7 @@ export const laudosRouter = router({
     }),
 
   // ── Trechos normativos (busca e listagem por norma) ───────────────────────
+  // GLOBAL POR DESIGN: normaTrechos/normasBiblioteca são catálogo compartilhado.
 
   // Admin: busca trechos por palavra-chave em todas as normas
   "normasTrechos.search": adminLocalProcedure
@@ -453,9 +495,10 @@ export const laudosRouter = router({
       aplicacao: z.string().optional(),
       ordem: z.number().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      await carregarLaudoDoTenant(input.laudoId, ctx.tenantId);
       const db = await import("../laudosDb");
-      const nova = await db.addLaudoCitacao(input);
+      const nova = await db.addLaudoCitacao({ ...input, tenantId: ctx.tenantId });
       return { success: true, citacao: nova };
     }),
 
@@ -467,9 +510,12 @@ export const laudosRouter = router({
       aplicacao: z.string().optional(),
       ordem: z.number().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const { id, ...data } = input;
       const db = await import("../laudosDb");
+      const citacao = await db.getLaudoCitacaoById(id);
+      if (!citacao) throw new TRPCError({ code: "NOT_FOUND", message: "Citação não encontrada" });
+      await carregarLaudoDoTenant(citacao.laudoId, ctx.tenantId);
       await db.updateLaudoCitacao(id, data);
       return { success: true };
     }),
@@ -477,8 +523,11 @@ export const laudosRouter = router({
   // Admin: remove uma citação
   "citacoes.remove": adminLocalProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await import("../laudosDb");
+      const citacao = await db.getLaudoCitacaoById(input.id);
+      if (!citacao) throw new TRPCError({ code: "NOT_FOUND", message: "Citação não encontrada" });
+      await carregarLaudoDoTenant(citacao.laudoId, ctx.tenantId);
       await db.removeLaudoCitacao(input.id);
       return { success: true };
     }),
@@ -497,13 +546,12 @@ export const laudosRouter = router({
     }))
     .mutation(async ({ input, ctx }) => {
       const db = await import("../laudosDb");
-      const laudo = await db.getLaudoById(input.laudoId);
-      if (!laudo) throw new TRPCError({ code: "NOT_FOUND", message: "Laudo não encontrado" });
+      const laudo = await carregarLaudoDoTenant(input.laudoId, ctx.tenantId);
       // criadoPorTipo garante que não confunde ID de admin com ID de técnico (tabelas independentes)
       const foiCriador = laudo.criadoPor === ctx.technicianId && laudo.criadoPorTipo === "tecnico";
       const atribuido = laudo.tecnicos?.some((t: any) => t.tecnicoId === ctx.technicianId);
       if (!foiCriador && !atribuido) throw new TRPCError({ code: "FORBIDDEN", message: "Acesso negado" });
-      const nova = await db.addLaudoCitacao(input);
+      const nova = await db.addLaudoCitacao({ ...input, tenantId: ctx.tenantId });
       return { success: true, citacao: nova };
     }),
 
@@ -517,12 +565,11 @@ export const laudosRouter = router({
     .mutation(async ({ input, ctx }) => {
       const { id, ...data } = input;
       const db = await import("../laudosDb");
-      
+
       const citacao = await db.getLaudoCitacaoById(id);
       if (!citacao) throw new TRPCError({ code: "NOT_FOUND", message: "Citação não encontrada" });
 
-      const laudo = await db.getLaudoById(citacao.laudoId);
-      if (!laudo) throw new TRPCError({ code: "NOT_FOUND", message: "Laudo não encontrado" });
+      const laudo = await carregarLaudoDoTenant(citacao.laudoId, ctx.tenantId);
 
       // criadoPorTipo garante que não confunde ID de admin com ID de técnico (tabelas independentes)
       const foiCriador = laudo.criadoPor === ctx.technicianId && laudo.criadoPorTipo === "tecnico";
@@ -541,8 +588,7 @@ export const laudosRouter = router({
       const citacao = await db.getLaudoCitacaoById(input.id);
       if (!citacao) throw new TRPCError({ code: "NOT_FOUND", message: "Citação não encontrada" });
 
-      const laudo = await db.getLaudoById(citacao.laudoId);
-      if (!laudo) throw new TRPCError({ code: "NOT_FOUND", message: "Laudo não encontrado" });
+      const laudo = await carregarLaudoDoTenant(citacao.laudoId, ctx.tenantId);
 
       // criadoPorTipo garante que não confunde ID de admin com ID de técnico (tabelas independentes)
       const foiCriador = laudo.criadoPor === ctx.technicianId && laudo.criadoPorTipo === "tecnico";
@@ -558,7 +604,8 @@ export const laudosRouter = router({
   // Admin: analisa o laudo e sugere trechos normativos relevantes via Claude API
   "ia.sugerirNormas": adminLocalProcedure
     .input(z.object({ laudoId: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      await carregarLaudoDoTenant(input.laudoId, ctx.tenantId);
       const ia = await import("../iaLaudos");
       const sugestoes = await ia.sugerirNormasIA(input.laudoId);
       return { success: true, sugestoes };
@@ -567,7 +614,8 @@ export const laudosRouter = router({
   // Admin: gera sugestão de conclusão, parecer e recomendações via Claude API
   "ia.sugerirConclusao": adminLocalProcedure
     .input(z.object({ laudoId: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      await carregarLaudoDoTenant(input.laudoId, ctx.tenantId);
       const ia = await import("../iaLaudos");
       const sugestao = await ia.sugerirConclusaoIA(input.laudoId);
       return { success: true, sugestao };
@@ -577,9 +625,7 @@ export const laudosRouter = router({
   "iaTecnico.sugerirNormas": protectedTechnicianProcedure
     .input(z.object({ laudoId: z.number() }))
     .mutation(async ({ input, ctx }) => {
-      const db = await import("../laudosDb");
-      const laudo = await db.getLaudoById(input.laudoId);
-      if (!laudo) throw new TRPCError({ code: "NOT_FOUND", message: "Laudo não encontrado" });
+      const laudo = await carregarLaudoDoTenant(input.laudoId, ctx.tenantId);
       // criadoPorTipo garante que não confunde ID de admin com ID de técnico (tabelas independentes)
       const foiCriador = laudo.criadoPor === ctx.technicianId && laudo.criadoPorTipo === "tecnico";
       const atribuido  = laudo.tecnicos?.some((t: any) => t.tecnicoId === ctx.technicianId);
@@ -592,9 +638,7 @@ export const laudosRouter = router({
   "iaTecnico.sugerirConclusao": protectedTechnicianProcedure
     .input(z.object({ laudoId: z.number() }))
     .mutation(async ({ input, ctx }) => {
-      const db = await import("../laudosDb");
-      const laudo = await db.getLaudoById(input.laudoId);
-      if (!laudo) throw new TRPCError({ code: "NOT_FOUND", message: "Laudo não encontrado" });
+      const laudo = await carregarLaudoDoTenant(input.laudoId, ctx.tenantId);
       // criadoPorTipo garante que não confunde ID de admin com ID de técnico (tabelas independentes)
       const foiCriador = laudo.criadoPor === ctx.technicianId && laudo.criadoPorTipo === "tecnico";
       const atribuido  = laudo.tecnicos?.some((t: any) => t.tecnicoId === ctx.technicianId);
@@ -613,17 +657,15 @@ export const laudosRouter = router({
       telefone: z.string().min(8),
       mensagem: z.string().optional(),
     }))
-    .mutation(async ({ input }) => {
-      const { generateLaudoPDF } = await import("../pdfLaudo");
-      const db = await import("../laudosDb");
-      const wa = await import("../whatsapp");
-
-      // Busca dados do laudo para compor a mensagem e o nome do arquivo
-      const laudo = await db.getLaudoById(input.laudoId);
-      if (!laudo) throw new TRPCError({ code: "NOT_FOUND", message: "Laudo não encontrado" });
+    .mutation(async ({ input, ctx }) => {
+      const laudo = await carregarLaudoDoTenant(input.laudoId, ctx.tenantId);
       if (laudo.status !== "finalizado") {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Apenas laudos finalizados podem ser enviados" });
       }
+
+      const { generateLaudoPDF } = await import("../pdfLaudo");
+      const db = await import("../laudosDb");
+      const wa = await import("../whatsapp");
 
       // Gera o PDF em memória (Buffer)
       const pdfBuffer = await generateLaudoPDF(input.laudoId);
@@ -641,11 +683,11 @@ export const laudosRouter = router({
       return { success: true };
     }),
 
-  // ── Configurações do Técnico ───────────────────────────────────────────────
+  // ── Configurações do Técnico (por tenant) ─────────────────────────────────
   getTecnico: adminLocalProcedure
-    .query(async () => {
+    .query(async ({ ctx }) => {
       const db = await import("../laudosDb");
-      return await db.getConfiguracoesTecnico();
+      return await db.getConfiguracoesTecnico(ctx.tenantId);
     }),
 
   updateTecnicoConfig: adminLocalProcedure
@@ -656,9 +698,9 @@ export const laudosRouter = router({
       empresa: z.string().optional(),
       cidade: z.string().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await import("../laudosDb");
-      await db.upsertConfiguracoesTecnico(input);
+      await db.upsertConfiguracoesTecnico(ctx.tenantId, input);
       return { success: true };
     }),
 });
