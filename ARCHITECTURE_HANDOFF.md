@@ -910,9 +910,14 @@ Com dois routers isolados, a metodologia da 3.7.2 ficou clara o suficiente para 
 - **`pushSubscriptions`** (commit `f5759ec`): passa a carimbar `tenantId` do `ctx` na criação (userId já vinha do ctx — já era seguro).
 - **Faxina `reports`/`users`** (commit `3d0d653`): removidos os routers legados do template original (sistema `userId`, sem caller no frontend), com as funções órfãs de `db.ts`. Confirmado que `ctx.user`/`auth.me`/router `auth` (login) continuam intactos.
 
-**Validação:** `tsc` 32, zero novos. **Pendente:** ao contrário das levas anteriores, `laudos`/SSE/`adminMetrics`/`pdvProcedure` foram commitados/deployados **sem ghost-probe + regressão registrados** — precisam ser exercitados em staging antes de dar a 3.7.2 como plenamente validada.
+**Validação (staging, 16/08 — servidor local × `_tst`, HTTP real com JWT):** `laudos` — ghost-probe (laudo/foto do tenant 2 → NOT_FOUND), FK forjada (`clienteId`/`tecnicoId` de outro tenant → NOT_FOUND), regressão completa (criar → foto/medição/citação → atribuir técnico → PDF) e portal do técnico (só vê os seus); `adminMetrics` bateu com o banco; `pdvProcedure` tenant 1 OK; SSE `/api/water-tank-sse` 401 sem cookie / 200 com. `tsc` 32. *Nota SEC-01: a URL antiga `GET /api/admin-metrics` devolve o SPA (HTML) via catch-all do Vite, não 404 — a rota Express foi de fato removida; o 200 é comportamento normal de SPA, não vazamento.* **Único ponto por partes:** propagação SSE em tempo real (MQTT off no staging) precisa de teste no navegador com sensor real.
 
-**Backfill:** `scripts/backfill-tenant-null.ts` (commit `5b3e962`) — varre `information_schema` por tabelas com `tenantId`, faz backfill determinístico de laudos (via cliente/OS) + `pushSubscriptions`, reporta as ambíguas (`configuracoesTecnico`, laudos residuais) para decisão manual, com `assertStagingEnvironment` e dry-run. **Ainda não cobre** as tabelas das levas anteriores (sub-OS, checklists, `clientDocuments`, caixa d'água) — estender antes da 3.7.1f para virar o script único do backfill de produção.
+**Backfill:** `scripts/backfill-tenant-null.ts` estendido (16 regras determinísticas via FK-pai: `clientDocuments`, sub-tabelas de OS incl. `workOrderHistory`, `inspectionTasks`/`checklistInstances` em ordem pai→filho, caixa d'água, sub-tabelas de orçamento). Dry-run + `--apply` no staging zeraram tudo derivável (`workOrderHistory` 5→0). Mantém `assertStagingEnvironment`, dry-run por padrão, e reporta as ambíguas para decisão manual.
+
+**Achados da validação (registrados, não bloqueantes para a 3.7.2):**
+- `laudosDb.deleteLaudo` limpa fotos/medições/técnicos mas **não** `laudoCitacoes` → citação órfã no cascade. Fix pontual.
+- Budget órfão `id=22` ("Hshs", `clientId` inexistente, teste de 05/08) — nenhuma regra deriva tenant. Lixo de teste; deletar (ele + `budgetItems`/`budgetHistory`) antes da 3.7.1f.
+- `notificationLogs` acumula `tenantId` NULL porque `server/lib/notifications.ts:223` insere sem carimbar. Não é falta de regra de backfill, é o write-path. Como é log de debug (baixa sensibilidade), **excluir da 3.7.1f (NOT NULL)** e corrigir o carimbo na 3.7.9 (que reescreve o fluxo de notificações).
 
 ---
 
@@ -931,17 +936,19 @@ Com dois routers isolados, a metodologia da 3.7.2 ficou clara o suficiente para 
 
 **Estimativa:** 10-15h de auditoria e refatoração + 5h de testes. **Sub-fase mais arriscada.**
 
-### 9.2 Sub-fase 3.7.1f — NOT NULL e JWT_SECRET *(⏳ PENDENTE)*
+### 9.2 Sub-fase 3.7.1f — NOT NULL e JWT_SECRET *(🟡 PRÓXIMA — desbloqueada; 3.7.2 concluída e validada)*
 
-**Escopo:**
-- ALTER `tenantId` para `NOT NULL` em todas as 38 tabelas operacionais (após garantir 0 nulls).
-- Adicionar FKs `tenantId → tenants.id`
-- Adicionar índices em `tenantId`
-- Rotacionar `JWT_SECRET` (invalidar sessões antigas)
+**Escopo (nesta ordem):**
+1. Backfill final de `tenantId IS NULL` residual — `scripts/backfill-tenant-null.ts` (já cobre todas as tabelas operacionais deriváveis via FK-pai). Rodar dry-run → `--apply`.
+2. Limpar o que o backfill não resolve (decisão manual): budget órfão `id=22` + filhos, `configuracoesTecnico`, laudo residual.
+3. ALTER `tenantId` para `NOT NULL` nas tabelas operacionais (após garantir 0 nulls) + FKs `tenantId → tenants.id` + índices em `tenantId`.
+4. Rotacionar `JWT_SECRET` (invalida sessões antigas — desloga todos).
 
-**Quando:** Esta é a "trava final" e só pode ser executada **após a conclusão total da sub-fase 3.7.2**.
+**⚠️ Exceção obrigatória:** **NÃO** aplicar NOT NULL em `notificationLogs`. O write-path (`server/lib/notifications.ts:223`) insere sem carimbar `tenantId`, então a coluna volta a acumular NULL — travar NOT NULL quebraria toda notificação. É tabela de log (baixa sensibilidade); manter nullable até a 3.7.9 corrigir o carimbo no fluxo de notificações. Revisar a lista de tabelas antes do ALTER e excluí-la explicitamente.
 
-**Estimativa:** 20 min execução, 15 min validação.
+**Quando:** trava final. 3.7.2 concluída e validada em staging — **desbloqueada**.
+
+**Estimativa:** 20 min execução, 15 min validação (+ o backfill, que agora é um script único).
 
 ### 9.3 Sub-fases 3.7.3 a 3.7.8
 

@@ -17,6 +17,8 @@
 |---|---|---|
 | ~~SEC-01~~ ✅ FECHADO (15/08, commit `44bd66b`) | `server/index.ts` | A rota `GET /api/admin-metrics` sem auth foi **removida** e substituída por `adminMetrics.router.getDashboard` (tRPC `adminLocalProcedure`, escopado por `ctx.adminId` + `ctx.tenantId`, sem input de identidade). |
 | SEC-02 | `server/index.ts` | A rota `POST /api/water-tank-monitoring` (registro manual de nível) aceita `adminId` direto do `req.body` sem validar posse (`resolvedAdminId = adminId \|\| clientRecord.adminId`). Achado na isolação do `waterTankAdmin` (14/08). O `tenantId` já é carimbado a partir do cliente real (correto), mas o `adminId`-do-body deveria vir do contexto/cliente, não do body. Baixo impacto (campo denormalizado), mas fica registrado. |
+| NOTIF-01 | `server/lib/notifications.ts:223` | `notify()` insere em `notificationLogs` **sem carimbar `tenantId`** → cada log nasce NULL. Achado no backfill da 3.7.2 (16/08). **Bloqueia NOT NULL de `notificationLogs` na 3.7.1f** (por isso essa tabela fica de fora do travamento). Corrigir o carimbo (best-effort, do usuário-alvo — `notify` é chamado de vários lugares, alguns sem ctx) junto da **3.7.9**, que reescreve o fluxo de notificações. |
+| LAUDO-01 | `server/laudosDb.ts` (`deleteLaudo`) | O cascade de `deleteLaudo` limpa `laudoFotos`/`laudoMedicoes`/`laudoTecnicos` mas **esquece `laudoCitacoes`** → citações órfãs ao deletar um laudo. Achado na validação do `laudos` (16/08). Fix pontual (adicionar o delete de `laudoCitacoes` no cascade). Baixo impacto. |
 
 ---
 
