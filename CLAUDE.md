@@ -4,7 +4,7 @@
 > Contém o **contexto operacional vivo** — o que está sendo feito agora, regras invioláveis, comandos comuns.
 > Para visão arquitetural completa, ver [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDOFF.md).
 
-**Última atualização:** 13/08/2026 (workOrders isolado, próximo router a definir)
+**Última atualização:** 16/08/2026 (3.7.2/isolamento concluída — 9 routers; próximo passo é 3.7.1f)
 
 ---
 
@@ -22,10 +22,10 @@
 
 ---
 
-## 2. Estado atual (14/08/2026)
+## 2. Estado atual (16/08/2026)
 
 ### Em andamento
-**Fase 3.7 — Refactor multi-tenant.** Branch `multi-tenant`. **Sub-fase 3.7.2 (Isolamento de queries) em andamento — 8 routers isolados (`technicians`, `clients`, `workOrders`, `budgets`, `checklists`, `technicianPortal`, `documents`, `waterTankAdmin`).** Varredura completa dos routers restantes feita — sobra só o gap `clientProfile.uploadPhoto` + verificar legados `reports`/`users`/`pushSubscriptions`.
+**Fase 3.7 — Refactor multi-tenant.** Branch `multi-tenant`. **Sub-fase 3.7.2 (Isolamento de queries) CONCLUÍDA — 9 routers isolados (`technicians`, `clients`, `workOrders`, `budgets`, `checklists`, `technicianPortal`, `documents`, `waterTankAdmin`, `laudos`).** Todo router que toca dado operacional está isolado por tenant. Fechados no caminho: gap `clientProfile.uploadPhoto`, `SEC-01` (`/api/admin-metrics` → `adminMetrics.router` autenticado), SSE `/api/water-tank-sse` (auth + clientId do JWT), gate `pdvProcedure` (PDV só tenant 1), carimbo de `tenantId` no `pushSubscriptions`, e faxina dos routers legados `reports`/`users` (removidos). **Próximo passo: 3.7.1f** (NOT NULL + FKs + índices + backfill final + rotação do `JWT_SECRET`).
 
 Dois métodos de isolamento em uso, conforme o router usa helper isolado ou `server/db.ts` compartilhado:
 - **Método A** (`technicians`): filtro direto na query via `forTenantId`/`withTenantId`.
@@ -46,6 +46,7 @@ Cada router isolado é validado com **ghost-probe**: criar um registro sob outro
 - ✅ Sub-fase 3.7.2 (Piloto): Router `technicians` 100% isolado por tenant.
 - ✅ Sub-fase 3.7.2 (Escala, router 2/N): Router `clients` isolado por tenant (commit `91e0403`), incluindo correção de um IDOR pré-existente em `equipment.remove` (sem checagem de posse alguma antes desta mudança). `getClientByUsername` permanece global — é usada pelo login do cliente, que não passa pelo router. Detalhes em [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDOFF.md) seção 8.8.
 - ✅ Fixes de infra descobertos no caminho da 3.7.2: pipeline de deploy do staging corrigido (pm2 apontava pro diretório de produção; `ecosystem.config.cjs` resolveu — `deploy-tst` agora funciona de verdade); tabela `client_equipment` estava ausente no banco de staging (`_tst`), criada — corrigiu bug de equipamento e normalizou upload de documento.
+- ✅ Sub-fase 3.7.2 (Escala, router 9/N): `laudos` isolado (commit `3dd4d4e`, Método B) — o router mais complexo (40+ endpoints). Helpers `carregarLaudoDoTenant` (guarda de posse em todo endpoint por id), `assertClienteDoTenant`/`assertTecnicoDoTenant` (FK-do-input); `listLaudos` com fail-closed de tenant; sub-recursos (fotos/medições/citações) guardados via laudo pai + carimbam `tenantId`; sem escritor de sistema/Express (callers externos são read-only: IA/PDF). **Validação em staging pendente** (ghost-probe + regressão do fluxo do técnico). Junto nesta leva: SEC-01 fechado (`adminMetrics.router` autenticado, escopado por adminId+tenantId), gate `pdvProcedure`, SSE `/api/water-tank-sse` com `requireClientAuth`, `pushSubscriptions` carimba `tenantId`, e remoção dos routers legados `reports`/`users`.
 - ✅ Sub-fase 3.7.2 (Escala, router 8/N): `waterTankAdmin` isolado e **validado em staging** (commit `8c4e069`). Fechou o pior IDOR da sub-fase (`adminId` vinha do input). Duas metades: **admin** (fail-closed) e **ingestão MQTT/Express** (best-effort, SEM fail-closed — nunca dropa leitura/alarme, risco da Fase 1). `listPending` global (pool de devices). Achados: drift de `alertPhone2` no staging e `adminId`-do-body na rota Express (`SEC-02`). Seção 8.15 do [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDOFF.md).
 - ✅ Sub-fase 3.7.2 (Escala, routers 6-7/N): `technicianPortal` (commit `4a35ab1`) e `documents` (commit `6997ef6`) isolados e **validados em staging**. `technicianPortal` já era seguro por posse do técnico; a leva fechou o acúmulo de `tenantId=NULL` nas 5 sub-tabelas de OS (fail-closed nas `createX` do `workOrdersAuxDb` + 9 call sites). `documents`: `clientDocuments` isolado em 3 routers + rota Express; vazamento total no `listAll` corrigido (filtro `adminId` nunca aplicado); routers de doc duplicados sem caller no front (faxina). Detalhes nas seções 8.13/8.14 do [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDOFF.md).
 - ✅ Sub-fase 3.7.2 (Escala, router 5/N): Router `checklists` isolado e **validado em staging** (14/08, commit `88e4a85`). `templates.*` globais por design (`checklistTemplates` sem `tenantId` — catálogo compartilhado); `inspectionTasks`/`checklistInstances` com guarda de posse; `createInspectionTask`/`createChecklistInstance` com `tenantId` obrigatório + fail-closed, cobrindo os 3 caminhos de escrita (router admin, `technicianPortal.addChecklist`, `monthlyOsJob`). Ghost-probe OK, regressão do fluxo admin OK, 0 órfãos no staging. Junto, faxina de código morto (9 arquivos removidos). Detalhes na seção 8.12 do [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDOFF.md).
@@ -53,7 +54,7 @@ Cada router isolado é validado com **ghost-probe**: criar um registro sob outro
 - ✅ Sub-fase 3.7.2 (Escala, router 3/N): Router `workOrders` isolado e **validado em staging** (14/08). Além do router tRPC (Método B + guardas multi-etapa nos sub-routers), foram cobertos: 2 rotas Express legadas (`GET`/`POST /api/work-orders`), 3 caminhos extras de criação de OS (`workOrdersRecurrence`, `budgets.approve`/`generateOs`), e uma **guarda fail-closed** em `workOrdersDb.createWorkOrder` que expôs mais 3 call sites de sistema (`monthlyOsJob` 2x, `waterTankAlertService`) — todos corrigidos. Ghost-probe cross-tenant OK; backfill de 1 OS órfã (`tenantId=NULL`) feita no staging. Sub-router `metrics` adiado (dívida técnica); `GET /api/admin-metrics` sem auth registrado como `SEC-01`. Detalhes na seção 8.10 do [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDOFF.md).
 
 ### Próxima
-**Sub-fase 3.7.2 (Escala, router 8/N):** Isolar o próximo router (candidato principal: `waterTankAdmin`; revisar demais routers restantes). Ou intercalar a **faxina de código morto** acumulada.
+**Sub-fase 3.7.1f — travamento final** (isolamento 3.7.2 concluído, desbloqueada): `tenantId` NOT NULL + FKs `tenantId → tenants.id` + índices nas tabelas operacionais, **backfill de qualquer `tenantId IS NULL` residual antes de travar** (script `scripts/backfill-tenant-null.ts` — hoje cobre laudos+pushSubscriptions determinístico; estender para as demais tabelas antes de produção), e rotação do `JWT_SECRET` (desloga todos). **Pendente antes disso:** validar em staging os últimos commits ainda não exercitados (`laudos`, SSE `/api/water-tank-sse`, `adminMetrics`, `pdvProcedure`).
 
 Rito de sempre: prompt para a IA do terminal (Claude Code no VS Code) → revisão do diff com o Thiago → commit + push → `deploy-tst` → validação com ghost-probe. (O deploy puxa via `git pull`, então precisa commitar+pushar antes; a validação em staging acontece depois do commit, na branch `multi-tenant`.)
 
@@ -66,7 +67,7 @@ Rito de sempre: prompt para a IA do terminal (Claude Code no VS Code) → revis�
 **Dívidas técnicas anotadas (sem pressa):**
 - `getTechnicianById` tem `tenantId` opcional — vira obrigatório quando `technicianPortal` for isolado (`workOrders`, que já usa a variante com `tenantId`, e `checklists` já foram).
 - ✅ **Faxina de código morto (concluída em 14/08)**: removidos `createWorkOrder` órfã do `db.ts`, sub-router `workOrders.timeTracking.*` + funções do aux, `inspectionTasks.complete`/`completeInspectionTask`/`areAllChecklistsComplete`, routers de documento duplicados (`adminDocuments` + `adminProfile.adminDocuments`) e 4 funções de doc órfãs. **`canComplete` é UI viva** (governa o botão "Concluir Tarefa" no `InspectionTaskItem`, mesmo sendo stub `return true`) — **não é morto, foi mantido**. Tabela `workOrderTimeTracking` mantida no banco (só o código saiu).
-- `metrics` do `workOrders` e `GET /api/admin-metrics` sem auth (`SEC-01`) — pendências registradas, fora do escopo do isolamento atual.
+- ✅ **`SEC-01` fechado** (commit `44bd66b`): `GET /api/admin-metrics` sem auth virou `adminMetrics.router` (tRPC autenticado, escopado por `adminId`+`tenantId`). Resta o `metrics` do `workOrders` (dívida técnica adiada) e o `SEC-02` (`adminId`-do-body na rota Express `POST /api/water-tank-monitoring` — verificar se já foi corrigido).
 - `3.7.1f` (NOT NULL + FKs + índices) só entra depois que **todos** os routers estiverem isolados — e precisa de um backfill final de `tenantId IS NULL` antes de travar (novos NULLs podem surgir enquanto nem todo caminho de escrita tiver a guarda).
 
 ### Roadmap restante (resumo)

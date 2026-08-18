@@ -897,15 +897,34 @@ Com dois routers isolados, a metodologia da 3.7.2 ficou clara o suficiente para 
 
 **Achados fora do escopo:** (1) drift de schema no staging — `waterTankSensors` estava sem a coluna `alertPhone2` no `_tst` (existe no `schema.ts`/produção; mesmo padrão do `client_equipment`); aplicado `ALTER` aditivo só no staging, produção não precisa. (2) a rota Express `POST /api/water-tank-monitoring` ainda aceita `adminId` do `req.body` sem validar posse (`SEC-02` no `PENDENCIAS_TECNICAS.md`) — o `tenantId` já vem do cliente real, mas o `adminId`-do-body é dívida separada.
 
+### 8.16 Sub-fase 3.7.2 — Router `laudos` + fechamento da sub-fase (15/08/2026)
+
+**Objetivo:** Isolar `laudos` (9º e mais complexo router — 40+ endpoints, admin + técnico + público) e fechar os últimos itens da 3.7.2.
+
+**`laudos` (commit `3dd4d4e`, Método B):** as 5 tabelas (`laudos`, `laudoFotos`, `laudoMedicoes`, `laudoTecnicos`, `laudoCitacoes`) têm `tenantId`. Introduzidos helpers reutilizáveis: `carregarLaudoDoTenant(laudoId, tenantId)` (guarda de posse usada em **todo** endpoint que recebe id/laudoId), `assertClienteDoTenant`/`assertTecnicoDoTenant` (FKs-do-input). `listLaudos` com fail-closed de `tenantId`; sub-recursos (fotos/medições/citações) guardados via laudo pai (multi-etapa) e carimbando `tenantId` na escrita; `atribuirTecnico` valida o técnico. Callers externos do `laudosDb` são só read-only (`iaLaudos`, `pdfLaudo`) — sem escritor de sistema/Express. Endpoints do técnico já tinham guarda de posse por `criadoPor`/`tecnicoAtribuido`.
+
+**Outros itens fechados na mesma janela:**
+- **SEC-01** (commit `44bd66b`): a rota Express `GET /api/admin-metrics?adminId=X` (sem auth, aceitava adminId da query) foi removida e substituída por `adminMetrics.router.getDashboard` — `adminLocalProcedure`, escopado por `ctx.adminId` **e** `ctx.tenantId`, sem input de identidade.
+- **SSE `/api/water-tank-sse`**: ganhou `requireClientAuth` e o `clientId` passou a vir do JWT (antes vinha da query — qualquer um assinava o stream de qualquer cliente). Gap que a auditoria do `waterTankAdmin` não tinha coberto.
+- **Gate `pdvProcedure`** (commit `833834f`): novo middleware em `_core/trpc.ts` que lança `FORBIDDEN` se `ctx.tenantId !== 1` — aplica a decisão "PDV é exclusivo da JNC" no nível da procedure.
+- **`pushSubscriptions`** (commit `f5759ec`): passa a carimbar `tenantId` do `ctx` na criação (userId já vinha do ctx — já era seguro).
+- **Faxina `reports`/`users`** (commit `3d0d653`): removidos os routers legados do template original (sistema `userId`, sem caller no frontend), com as funções órfãs de `db.ts`. Confirmado que `ctx.user`/`auth.me`/router `auth` (login) continuam intactos.
+
+**Validação:** `tsc` 32, zero novos. **Pendente:** ao contrário das levas anteriores, `laudos`/SSE/`adminMetrics`/`pdvProcedure` foram commitados/deployados **sem ghost-probe + regressão registrados** — precisam ser exercitados em staging antes de dar a 3.7.2 como plenamente validada.
+
+**Backfill:** `scripts/backfill-tenant-null.ts` (commit `5b3e962`) — varre `information_schema` por tabelas com `tenantId`, faz backfill determinístico de laudos (via cliente/OS) + `pushSubscriptions`, reporta as ambíguas (`configuracoesTecnico`, laudos residuais) para decisão manual, com `assertStagingEnvironment` e dry-run. **Ainda não cobre** as tabelas das levas anteriores (sub-OS, checklists, `clientDocuments`, caixa d'água) — estender antes da 3.7.1f para virar o script único do backfill de produção.
+
 ---
 
 ## 9. O que vem pela frente
 
-### 9.1 Sub-fase 3.7.2 — Escalar Isolamento de Queries *(🟡 EM ANDAMENTO)*
+### 9.1 Sub-fase 3.7.2 — Isolamento de Queries *(✅ CONCLUÍDA — validação final de `laudos`/SSE/`adminMetrics` pendente)*
 
-**Escopo:** Aplicar o padrão de isolamento de queries (Método B) a todos os routers que lidam com dados operacionais. **8 routers isolados:** `technicians` (Método A), `clients`, `workOrders`, `budgets`, `checklists`, `technicianPortal`, `documents`, `waterTankAdmin`.
+**Escopo:** Aplicar o padrão de isolamento de queries (Método B) a todos os routers que lidam com dados operacionais. **✅ CONCLUÍDA — 9 routers isolados:** `technicians` (Método A), `clients`, `workOrders`, `budgets`, `checklists`, `technicianPortal`, `documents`, `waterTankAdmin`, `laudos`.
 
-- **Estratégia:** Isolar um router por vez, validando cada um com ghost-probe antes de avançar. **Restante após a varredura completa:** gap pontual em `clientProfile.uploadPhoto` (FK `clientId` do input sem guarda de tenant); verificar/limpar os legados `reports`/`users` (sistema `userId` do template original, provável código morto) e `pushSubscriptions`. `waterTankMonitoring`/`adminProfile` já seguros (escopados por identidade própria). `pdv`, `whatsapp`, `system`, `auth`, `adminAuth` fora do escopo (infra/auth/decisão).
+- **Fechados junto (15/08):** `clientProfile.uploadPhoto` (FK-do-input), `SEC-01` (`/api/admin-metrics` → `adminMetrics.router` autenticado), SSE `/api/water-tank-sse` (`requireClientAuth` + clientId do JWT — gap perdido na auditoria do waterTankAdmin), gate `pdvProcedure` (PDV só tenant 1), carimbo de `tenantId` no `pushSubscriptions`, e remoção dos routers legados `reports`/`users` (sem quebrar `ctx.user`/`auth`).
+- **Já seguros por identidade própria (não precisaram de mudança):** `waterTankMonitoring`, `adminProfile`, `pushSubscriptions` (userId sempre de ctx). **Fora do escopo:** `pdv` (gated), `whatsapp`, `system`, `auth`, `adminAuth`.
+- **Pendente antes da 3.7.1f:** (a) validação em staging de `laudos`/SSE/`adminMetrics`/`pdvProcedure` (commitados, sem ghost-probe/regressão registrados); (b) estender `scripts/backfill-tenant-null.ts` para cobrir todas as tabelas operacionais (hoje só laudos+pushSubscriptions determinístico).
 - **Fronteira global (catálogos compartilhados):** `checklistTemplates` não tem `tenantId` — templates ficam globais. Padrão a reaplicar: tabelas de catálogo/referência compartilhadas entre tenants não recebem guarda; comentar como "GLOBAL POR DESIGN".
 - **Padrão de guarda de FK-do-input:** ao isolar um router, além da posse do registro principal, validar **toda foreign key vinda do input** (`clientId`, `technicianId`, etc.) contra o tenant — senão dá pra referenciar registro de outro tenant e vazar PII. Lição incorporada a partir do `budgets`/`workOrders`.
 - **PDV:** As 6 tabelas de PDV (`products`, `sales`, etc.) estão **fora** do escopo, pois a funcionalidade é exclusiva da JNC.
