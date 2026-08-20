@@ -35,7 +35,8 @@ async function main() {
 
   console.log("\n=== OS (busca por osNumber, com e sem '#') ===");
   const [osRows] = await pool.query(
-    `SELECT id, osNumber, status, tenantId, clientId, technicianId, startedAt, pausedAt, completedAt, createdAt, updatedAt
+    `SELECT id, osNumber, status, clientId, technicianId, startedAt, pausedAt, completedAt, createdAt, updatedAt,
+            isRecurring, recurrenceType, parentOsId
      FROM workOrders WHERE osNumber = ? OR osNumber = ?`,
     [osNumber, `#${osNumber}`]
   );
