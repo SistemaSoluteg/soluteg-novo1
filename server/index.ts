@@ -71,7 +71,8 @@ function requireAdminOrTechAuth(req: Request, res: Response, next: NextFunction)
 // temporariamente, antes de ser enviado para o Cloudinary.
 // ============================================================
 // Whitelist de tipos de arquivos permitidos (Segurança MED-06)
-const ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
+// image/heic e image/heif: formato padrão de foto do iPhone (iOS 11+).
+const ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "application/pdf"];
 
 // Instância do multer com armazenamento em memória e filtro de MIME
 const upload = multer({
@@ -147,7 +148,7 @@ async function startServer() {
       if (invalidFiles.length > 0) {
         return res.status(400).json({
           success: false,
-          message: `Tipo de arquivo não permitido: ${invalidFiles.map(f => f.mimetype).join(", ")}. Apenas imagens (JPG, PNG, WebP) e PDFs são aceitos.`
+          message: `Tipo de arquivo não permitido: ${invalidFiles.map(f => f.mimetype).join(", ")}. Apenas imagens (JPG, PNG, WebP, HEIC) e PDFs são aceitos.`
         });
       }
 
