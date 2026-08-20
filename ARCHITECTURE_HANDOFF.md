@@ -936,19 +936,19 @@ Com dois routers isolados, a metodologia da 3.7.2 ficou clara o suficiente para 
 
 **Estimativa:** 10-15h de auditoria e refatoração + 5h de testes. **Sub-fase mais arriscada.**
 
-### 9.2 Sub-fase 3.7.1f — NOT NULL e JWT_SECRET *(🟡 PRÓXIMA — desbloqueada; 3.7.2 concluída e validada)*
+### 9.2 Sub-fase 3.7.1f — NOT NULL e JWT_SECRET *(✅ CONCLUÍDA EM STAGING — 16/08; falta o cutover de produção)*
 
-**Escopo (nesta ordem):**
-1. Backfill final de `tenantId IS NULL` residual — `scripts/backfill-tenant-null.ts` (já cobre todas as tabelas operacionais deriváveis via FK-pai). Rodar dry-run → `--apply`.
-2. Limpar o que o backfill não resolve (decisão manual): budget órfão `id=22` + filhos, `configuracoesTecnico`, laudo residual.
-3. ALTER `tenantId` para `NOT NULL` nas tabelas operacionais (após garantir 0 nulls) + FKs `tenantId → tenants.id` + índices em `tenantId`.
-4. Rotacionar `JWT_SECRET` (invalida sessões antigas — desloga todos).
+**Executado e validado em staging (`_tst`, 16/08):**
+- **Fase 0 — diagnóstico:** `information_schema` listou **42 tabelas** com coluna `tenantId`. Achado: `admins` e `notificationContacts` estavam prontas e foram incluídas no travamento (fora das categorias originais do plano).
+- **Fase 1 — backfill:** staging já limpo (0 NULL deriváveis em 41/42; só `notificationLogs` com NULL residual, por design — NOTIF-01). Não precisou de `--apply`.
+- **Fase 2 — travamento:** **39 `ALTER ... MODIFY tenantId INT NOT NULL` + `ADD CONSTRAINT ... FOREIGN KEY (tenantId) REFERENCES tenants(id)`**, cada um validado por `information_schema` logo após. Total **41 tabelas travadas** (as 39 + `condominiums`/`gestors` que já vinham da 3.7.1b). `notificationLogs` deixada de fora (NOTIF-01).
+- **Fase 3 — rotação `JWT_SECRET`:** novo segredo no `.env` do staging + `pm2 restart --update-env`. Validada dos dois lados: cookie antigo rejeitado (aba deslogou na hora) e login novo OK. *(Lição: gerar o segredo direto pro `.env` via `sed`, sem `echo`/`grep` do valor — um segredo de staging foi exposto no processo e re-rotacionado.)*
 
-**⚠️ Exceção obrigatória:** **NÃO** aplicar NOT NULL em `notificationLogs`. O write-path (`server/lib/notifications.ts:223`) insere sem carimbar `tenantId`, então a coluna volta a acumular NULL — travar NOT NULL quebraria toda notificação. É tabela de log (baixa sensibilidade); manter nullable até a 3.7.9 corrigir o carimbo no fluxo de notificações. Revisar a lista de tabelas antes do ALTER e excluí-la explicitamente.
+Scripts: `scripts/diagnostico-3.7.1f-fase0.ts`, `scripts/lock-tenant-not-null-fk.ts`, `scripts/backfill-tenant-null.ts` (estendido, 16 regras via FK-pai).
 
-**Quando:** trava final. 3.7.2 concluída e validada em staging — **desbloqueada**.
+**⚠️ Exceção obrigatória (aplicada):** `notificationLogs` fica **fora** do NOT NULL — o write-path (`server/lib/notifications.ts:223`) insere sem carimbar `tenantId`, então a coluna volta a acumular NULL. Manter nullable até a 3.7.9. **Armadilha correlata (LOCK-01):** `admins`/`auditLog`/`invites`/`inspectionReports` foram travadas com NOT NULL mas seus writers (mortos/inativos) não carimbam `tenantId` — ao reativar (3.7.4 cria admin; 3.7.7 ativa auditLog) o writer TEM que carimbar, senão o INSERT falha.
 
-**Estimativa:** 20 min execução, 15 min validação (+ o backfill, que agora é um script único).
+**Falta — cutover de produção:** produção não recebeu **nenhuma** migração multi-tenant (checklist inteiro ⏳ no `PENDENCIAS_DEPLOY_PRODUCAO.md`). É um evento único, com backup e janela de baixo uso: merge `multi-tenant → master` → `mysqldump` → migrações de schema (centrais + colunas `tenantId`) → migração de dados (tenants + `tenantId=1`) → `deploy-app` → backfill de residuais → ALTERs da 3.7.1f → rotação do `JWT_SECRET`. A 3.7.1f é o **último passo** desse cutover.
 
 ### 9.3 Sub-fases 3.7.3 a 3.7.8
 
