@@ -16,9 +16,9 @@ config();
 
 import { v2 as cloudinary } from "cloudinary";
 
-const rawId = process.argv[2];
-if (!rawId) {
-  console.error("Uso: node scripts/diag-cloudinary-lookup.mjs <publicId>");
+const rawIds = process.argv.slice(2);
+if (!rawIds.length) {
+  console.error("Uso: node scripts/diag-cloudinary-lookup.mjs <publicId> [publicId2 publicId3 ...]");
   process.exit(1);
 }
 
@@ -28,14 +28,12 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-const candidates = [rawId, `os_attachments/${rawId}`];
-
-async function main() {
+async function lookup(rawId) {
+  const candidates = [rawId, `os_attachments/${rawId}`];
   for (const publicId of candidates) {
-    console.log(`\n=== Tentando public_id: "${publicId}" ===`);
     try {
       const result = await cloudinary.api.resource(publicId);
-      console.log("✓ Encontrado!");
+      console.log(`\n✓ "${rawId}" → encontrado como "${publicId}"`);
       console.log({
         public_id: result.public_id,
         secure_url: result.secure_url,
@@ -45,11 +43,18 @@ async function main() {
         width: result.width,
         height: result.height,
         created_at: result.created_at,
-        folder: result.folder,
       });
+      return;
     } catch (e) {
-      console.log("✗ Não encontrado com esse public_id:", e.message || e.error?.message);
+      // tenta o próximo candidato
     }
+  }
+  console.log(`\n✗ "${rawId}" → não encontrado em nenhuma variação testada`);
+}
+
+async function main() {
+  for (const rawId of rawIds) {
+    await lookup(rawId);
   }
   process.exit(0);
 }
