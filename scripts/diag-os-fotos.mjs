@@ -33,17 +33,22 @@ async function main() {
   const [[dbRow]] = await pool.query("SELECT DATABASE() as db");
   console.log("Banco:", dbRow);
 
-  console.log("\n=== OS (busca por osNumber, com e sem '#') ===");
+  console.log("\n=== OS (busca por osNumber exato, com e sem '#', e por id numérico) ===");
+  const numericId = /^\d+$/.test(osNumber) ? Number(osNumber) : null;
   const [osRows] = await pool.query(
-    `SELECT id, osNumber, status, clientId, technicianId, startedAt, pausedAt, completedAt, createdAt, updatedAt,
+    `SELECT id, osNumber, status, title, clientId, technicianId, startedAt, pausedAt, completedAt, createdAt, updatedAt,
             isRecurring, recurrenceType, parentOsId
-     FROM workOrders WHERE osNumber = ? OR osNumber = ?`,
-    [osNumber, `#${osNumber}`]
+     FROM workOrders WHERE osNumber = ? OR osNumber = ? OR id = ?`,
+    [osNumber, `#${osNumber}`, numericId ?? -1]
   );
   console.table(osRows);
 
   if (!osRows.length) {
-    console.log("Nenhuma OS encontrada com esse número. Confira o valor exato (com/sem #, zeros à esquerda etc).");
+    console.log("Nenhuma OS encontrada com esse número/id. Mostrando as 15 OS mais recentes pra localizar visualmente:");
+    const [recent] = await pool.query(
+      `SELECT id, osNumber, status, title, clientId, createdAt FROM workOrders ORDER BY createdAt DESC LIMIT 15`
+    );
+    console.table(recent);
     process.exit(0);
   }
 
