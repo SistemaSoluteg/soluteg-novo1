@@ -61,12 +61,16 @@ export default function FileUpload({ workOrderId, onUploadComplete }: FileUpload
         body: formData,
       });
 
-      if (!response.ok) {
-        throw new Error("Erro ao fazer upload dos arquivos");
-      }
-
       const data = await response.json();
 
+      if (!response.ok) {
+        // Nenhum arquivo do lote foi salvo (falha total) — 'message' vem do backend
+        throw new Error(data.message || "Erro ao fazer upload dos arquivos");
+      }
+
+      // 'urls' traz só o que realmente subiu pro Cloudinary e é seguro salvar —
+      // pode ser menos que selectedFiles.length se algum arquivo falhou no meio
+      // do lote (rede instável, timeout etc.) sem derrubar os outros.
       for (const uploaded of data.urls) {
         await createAttachment.mutateAsync({
           workOrderId,
@@ -80,7 +84,14 @@ export default function FileUpload({ workOrderId, onUploadComplete }: FileUpload
         });
       }
 
-      toast.success(`${selectedFiles.length} arquivo(s) enviado(s) com sucesso!`);
+      if (data.failed?.length) {
+        // Falha parcial: avisa quais não subiram, pra tentar de novo só essas
+        toast.warning(
+          `${data.urls.length} de ${selectedFiles.length} arquivo(s) enviado(s). Falharam: ${data.failed.map((f: any) => f.fileName).join(", ")} — tente reenviar só essas.`
+        );
+      } else {
+        toast.success(`${data.urls.length} arquivo(s) enviado(s) com sucesso!`);
+      }
       setSelectedFiles([]);
       setDescription("");
       onUploadComplete();

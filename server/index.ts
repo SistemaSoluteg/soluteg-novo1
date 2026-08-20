@@ -155,34 +155,70 @@ async function startServer() {
       // Importa a função de salvar arquivos na nuvem (Cloudinary)
       const { storagePut } = await import("./storage");
 
-      // Sobe TODOS os arquivos ao mesmo tempo (em paralelo) para economizar tempo
-      // Promise.all → espera todas as operações terminarem antes de continuar
-      const uploadPromises = files.map(async (file) => {
-        // Envia o arquivo para o Cloudinary e recebe a URL pública de volta
-        const { url, key } = await storagePut(
-          file.originalname, // Nome original do arquivo (ex: "foto_quadro.jpg")
-          file.buffer,       // Conteúdo do arquivo em bytes (vem da memória RAM)
-          file.mimetype      // Tipo do arquivo (ex: "image/jpeg", "application/pdf")
-        );
+      // Sobe TODOS os arquivos ao mesmo tempo (em paralelo) para economizar tempo.
+      //
+      // ⚠️ Promise.allSettled (não Promise.all): se um arquivo falhar no meio do
+      // lote (rede instável, timeout), os outros que JÁ subiram com sucesso pro
+      // Cloudinary não podem ser descartados — Promise.all rejeita o lote inteiro
+      // assim que qualquer promise falha, perdendo o resultado das que deram certo.
+      // Isso causou perda de fotos em produção (upload chegava no Cloudinary mas
+      // nunca virava registro no banco, porque a resposta inteira virava erro 500).
+      const uploadResults = await Promise.allSettled(
+        files.map(async (file) => {
+          // Envia o arquivo para o Cloudinary e recebe a URL pública de volta
+          const { url, key } = await storagePut(
+            file.originalname, // Nome original do arquivo (ex: "foto_quadro.jpg")
+            file.buffer,       // Conteúdo do arquivo em bytes (vem da memória RAM)
+            file.mimetype      // Tipo do arquivo (ex: "image/jpeg", "application/pdf")
+          );
 
-        // Retorna um objeto com as informações do arquivo já salvo na nuvem
-        return {
-          url,                        // Link público para acessar o arquivo
-          key,                        // Identificador único no Cloudinary
-          fileName: file.originalname, // Nome original
-          fileType: file.mimetype,     // Tipo (imagem, pdf, etc.)
-          fileSize: file.size          // Tamanho em bytes
-        };
-      });
+          // Retorna um objeto com as informações do arquivo já salvo na nuvem
+          return {
+            url,                        // Link público para acessar o arquivo
+            key,                        // Identificador único no Cloudinary
+            fileName: file.originalname, // Nome original
+            fileType: file.mimetype,     // Tipo (imagem, pdf, etc.)
+            fileSize: file.size          // Tamanho em bytes
+          };
+        })
+      );
 
-      // Aguarda todos os uploads terminarem
-      const results = await Promise.all(uploadPromises);
+      // Separa quem subiu com sucesso de quem falhou
+      const results = uploadResults
+        .filter((r): r is PromiseFulfilledResult<{ url: string; key: string; fileName: string; fileType: string; fileSize: number }> => r.status === "fulfilled")
+        .map(r => r.value);
+
+      const failedFiles = uploadResults
+        .map((r, i) => ({ r, fileName: files[i]?.originalname }))
+        .filter(({ r }) => r.status === "rejected")
+        .map(({ r, fileName }) => ({
+          fileName,
+          error: (r as PromiseRejectedResult).reason?.message || "Erro desconhecido",
+        }));
+
+      if (failedFiles.length > 0) {
+        console.error(`[JNC Upload] ${failedFiles.length}/${files.length} arquivo(s) falharam:`, failedFiles);
+      }
+
+      // Se TODOS falharam, não há nada útil pra salvar — retorna erro de verdade
+      // (antes, esse era o único caso que virava erro; agora, falha parcial não
+      // é mais tratada como falha total).
+      if (results.length === 0) {
+        return res.status(500).json({
+          success: false,
+          message: "Falha ao enviar todos os arquivos. Tente novamente.",
+          failed: failedFiles,
+        });
+      }
 
       // Retorna os dados para o frontend (componente WorkOrderAttachments.tsx)
-      // 'urls' é um array com as informações de cada arquivo enviado
+      // 'urls' traz só o que realmente subiu — 'failed' informa o que não deu certo,
+      // pra quem consumir essa resposta poder avisar o usuário (hoje o frontend
+      // ainda não lê 'failed', mas o campo já fica disponível pra isso).
       res.json({
         success: true,
-        urls: results
+        urls: results,
+        failed: failedFiles.length > 0 ? failedFiles : undefined,
       });
 
     } catch (error: any) {
