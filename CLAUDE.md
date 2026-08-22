@@ -4,7 +4,7 @@
 > Contém o **contexto operacional vivo** — o que está sendo feito agora, regras invioláveis, comandos comuns.
 > Para visão arquitetural completa, ver [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDOFF.md).
 
-**Última atualização:** 16/08/2026 (3.7.2/isolamento concluída — 9 routers; próximo passo é 3.7.1f)
+**Última atualização:** 21/08/2026 (3.7.2 + 3.7.1f concluídas e validadas em staging; próximo passo é o cutover de produção)
 
 ---
 

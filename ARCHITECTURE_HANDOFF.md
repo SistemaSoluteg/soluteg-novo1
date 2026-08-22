@@ -1,7 +1,7 @@
 # Soluteg — Documento Técnico de Arquitetura e Handoff
 
-> **Versão:** 1.3
-> **Data:** 13 de agosto de 2026
+> **Versão:** 1.4
+> **Data:** 21 de agosto de 2026
 > **Autor:** Thiago (com assessoria de Claude AI)
 > **Audiência:** Arquiteto de software, desenvolvedores seniores, contributors técnicos
 > **Status do projeto:** Em produção (JNC) | Refactor multi-tenant em andamento
@@ -562,8 +562,8 @@ Cloudinary plano grátis suporta até ~20 condomínios sem custo. Pago US$89/mê
 | 3.7.1c | Adicionar coluna `tenantId` nas tabelas existentes (nullable) | ✅ CONCLUÍDA |
 | 3.7.1d | Script de migração de dados (dry-run primeiro) | ✅ CONCLUÍDA |
 | 3.7.1e | Executar migração real + criar conta platformAdmin | ✅ CONCLUÍDA |
-| 3.7.2 | Isolamento de queries por tenant (helper centralizado + audit) | 🟡 EM ANDAMENTO |
-| 3.7.1f | Tornar `tenantId` NOT NULL + FKs + índices + rotacionar JWT_SECRET — **só depois de 3.7.2** | ⏳ PENDENTE |
+| 3.7.2 | Isolamento de queries por tenant (helper centralizado + audit) | ✅ CONCLUÍDA (staging) |
+| 3.7.1f | Tornar `tenantId` NOT NULL + FKs + índices + rotacionar JWT_SECRET — **só depois de 3.7.2** | ✅ CONCLUÍDA (staging) |
 | 3.7.3 | Procedures tRPC tipadas por papel (platformAdmin/tenantAdmin/gestor/technician) | ⏳ PENDENTE |
 | 3.7.4 | UI: portal platformAdmin (CRUD de tenants e admins) | ⏳ PENDENTE |
 | 3.7.5 | UI: branding dinâmico por tenant (logo, cor, nome) | ⏳ PENDENTE |
@@ -1304,8 +1304,8 @@ SMTP_PASS=...
 
 ## Encerramento
 
-Este documento reflete o estado em **05 de agosto de 2026**. À medida que o multi-tenant avança e novas decisões são tomadas, este documento **deve ser atualizado** — preferencialmente na mesma branch onde a mudança acontece.
+Este documento reflete o estado em **21 de agosto de 2026**. À medida que o multi-tenant avança e novas decisões são tomadas, este documento **deve ser atualizado** — preferencialmente na mesma branch onde a mudança acontece.
 
 Para qualquer dúvida ou sugestão, ver o `ROADMAP.md` para contexto de prioridades, ou abrir issue no GitHub.
 
-**Próximo marco:** Sub-fase 3.7.1f — tornar `tenantId` NOT NULL nas 38 tabelas operacionais, adicionar FKs `tenantId → tenants.id`, criar índices em `tenantId`, e rotacionar o `JWT_SECRET` para invalidar sessões anteriores à migração.
+**Próximo marco:** Cutover de produção. As sub-fases 3.7.2 (isolamento de queries — 9 routers) e 3.7.1f (NOT NULL + FKs + rotação do `JWT_SECRET`) já estão **concluídas e validadas em staging**; produção ainda não recebeu nenhuma migração multi-tenant. O cutover é um evento único, com backup e janela de baixo uso: merge `multi-tenant → master` → `mysqldump` → migrações de schema → migração de dados (criar tenants + carimbar `tenantId=1`) → `deploy-app` → backfill de residuais → ALTERs da 3.7.1f (exceto `notificationLogs` e `waterTankSensors` — ver NOTIF-01/LOCK-02) → rotação do `JWT_SECRET`. Base para o runbook: [`PLANO_3.7.1f.md`](./PLANO_3.7.1f.md) e [`PENDENCIAS_DEPLOY_PRODUCAO.md`](./PENDENCIAS_DEPLOY_PRODUCAO.md).
