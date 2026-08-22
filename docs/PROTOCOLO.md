@@ -121,9 +121,11 @@ const cutoff = sql.raw(`'${date.toISOString().slice(0, 19).replace("T", " ")}'`)
 ### 3.1 Rotina de início de sessão (obrigatório)
 
 Antes de qualquer tarefa, a IA deve:
-1. Ler `project_overview.md`, `feedback_patterns.md`, `feedback_security.md` e `session_titles.md`
-2. Registrar o título da sessão em `session_titles.md`
-3. Verificar `PENDENCIAS.md` para contexto de dívidas técnicas em aberto
+1. Ler os docs vivos **commitados** (a memória portável do projeto): `CLAUDE.md`, `ROADMAP.md`, `ARCHITECTURE_HANDOFF.md` e este `docs/PROTOCOLO.md`
+2. Verificar `docs/PENDENCIAS_TECNICAS.md` para as dívidas técnicas em aberto (`SEC-*`, `LOCK-*`, `NOTIF-*`, etc.)
+3. Ler a memória local do Claude Code (`.claude/…/memory/MEMORY.md`) — lembrando que ela é **local por máquina e não sincroniza**; o conhecimento durável vive nos docs commitados acima
+
+> Nota histórica: o esquema antigo de memória (`project_overview.md`, `feedback_patterns.md`, `feedback_security.md`, `session_titles.md`, `PENDENCIAS.md`) ficava na memória local de outro PC (`.claude/`, fora do git) e **não** está neste repositório. Um snapshot legível está em `docs/archive/MEMORY_CLAUDE.md`.
 
 ### 3.2 Checklist de entrega — toda tarefa passa por isso
 
@@ -135,8 +137,8 @@ Antes de informar que uma tarefa está concluída:
 - [ ] Ownership check feito em todos os recursos modificados?
 - [ ] Arquivos novos/modificados estão comentados adequadamente?
 - [ ] Enums Zod atualizados se o schema Drizzle mudou?
-- [ ] `PENDENCIAS.md` atualizado (nova dívida identificada ou item resolvido)?
-- [ ] Memória atualizada (`project_overview.md`, `feedback_patterns.md`)?
+- [ ] `docs/PENDENCIAS_TECNICAS.md` atualizado (nova dívida identificada ou item resolvido)?
+- [ ] Docs vivos atualizados quando o estado mudou (`CLAUDE.md`, `ROADMAP.md`, `ARCHITECTURE_HANDOFF.md`)?
 
 ### 3.3 Commits
 
@@ -159,7 +161,8 @@ Atualizar os arquivos de memória **imediatamente** após cada mudança relevant
 
 ## 4. Deploy
 
-- Servidor de produção: VPS com comando `deploy-jnc` executado em `/var/www/soluteg/backend`
+- Servidor de produção: VPS, comando `deploy-app` executado em `/var/www/soluteg/backend` (branch `master`)
+- Servidor de staging: comando `deploy-tst` em `/var/www/soluteg-staging` (branch `multi-tenant`)
 - Repositório: `JncBombas/soluteg-novo1` (atenção ao typo sem "t": `solueg-novo1`)
 - O deploy no VPS faz `git pull` — por isso o `git push` deve acontecer após cada commit
 
