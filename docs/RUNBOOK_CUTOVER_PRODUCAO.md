@@ -96,11 +96,11 @@ Cada fase abaixo: **o que faz**, **quem faz**, **pré-condição**, **validaçã
 
 ---
 
-## 4. Fase 2 — Janela de execução 🗂️🔧
+## 4. Fase 2 — Janela de execução 🗂️🔧 ✅ CONCLUÍDA (22/08)
 
-- [ ] Escolher horário de baixo uso (madrugada, conforme já é praxe no projeto).
-- [x] ~~Decidir se avisa os clientes~~ ✅ **Confirmado (22/08): sim, avisar.** Falta definir o texto do aviso e a antecedência — sugestão: WhatsApp em massa (o próprio módulo do sistema) 24-48h antes, avisando "manutenção programada de madrugada, sistema pode ficar indisponível por alguns minutos e vai pedir login novo depois".
-- [ ] Confirmar que você terá tempo pra rodar o runbook inteiro numa sentada — não é recomendável parar no meio com o banco em estado intermediário por muito tempo.
+- [x] ~~Decidir se avisa os clientes~~ ✅ Sim — **aviso já enviado pelo Thiago (22/08)**.
+- [x] ~~Escolher horário/momento de execução~~ ✅ Thiago confirmou pra seguir agora.
+- [x] ~~Ter tempo pra rodar numa sentada~~ ✅ Presumido pelo "podemos dar continuidade" — se em algum momento precisar pausar no meio, avisar explicitamente (o banco pode ficar em estado intermediário entre fases).
 
 ---
 
