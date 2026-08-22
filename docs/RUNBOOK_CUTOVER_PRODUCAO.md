@@ -1,6 +1,6 @@
 # Runbook — Cutover de Produção (Fase 3.7 Multi-tenant)
 
-> **Status:** 🟡 DECISÕES TOMADAS, código ainda não preparado — ver seção 1. Não executar antes da Fase 1 (💻 Claude Code) estar concluída e revisada.
+> **Status:** 🟡 Fase 1 em andamento — itens 1.1-1.3 concluídos (22/08, commit `c575987`), faltam 1.4 (merge `multi-tenant→master`) e 1.5 (build). Não executar as Fases 2+ (mexem em VPS/banco) antes da Fase 1 estar 100% concluída e revisada.
 > **Criado:** 22/08/2026, pela Claude "arquiteta" (foco segurança), a pedido do Thiago.
 > **Objetivo:** ser o roteiro único e sequenciado do cutover de produção — hoje esse trabalho está espalhado em `PENDENCIAS_DEPLOY_PRODUCAO.md`, `PLANO_3.7.1f.md` e o histórico do `ROADMAP.md`. Este documento não substitui os outros três (eles continuam com o detalhe de cada SQL) — ele é a **ordem de execução + os pontos de validação entre um passo e outro**.
 > **Escopo:** só a **produção**. Staging (`tst.soluteg.com.br`) já está com 3.7.1a–e, 3.7.2 e 3.7.1f validadas.
@@ -80,13 +80,14 @@ Cada fase abaixo: **o que faz**, **quem faz**, **pré-condição**, **validaçã
 **Pré-condição:** nenhuma — todas as decisões da seção 1 já foram tomadas (22/08).
 
 - [x] ~~1.0 Decisões de abordagem (achados 1.1–1.5)~~ ✅ confirmadas com o Thiago em 22/08
-- [ ] 1.1 Criar `scripts/lock-tenant-not-null-fk-producao.ts` (cópia de `lock-tenant-not-null-fk.ts`): usar `assertProductionEnvironment()`, e **remover `waterTankSensors` da lista `TABELAS`** (o original em staging não deve ser alterado — ele documenta o que staging tem hoje; a correção entra só na cópia de produção, comentada com referência ao LOCK-02/`docs/PENDENCIAS_TECNICAS.md`).
-- [ ] 1.2 Criar `scripts/migrate-to-multi-tenant-producao.ts`, `scripts/backfill-tenant-null-producao.ts` e `scripts/diagnostico-3.7.1f-fase0-producao.ts` (cópias dos 3 restantes, trocando `assertStagingEnvironment()` por `assertProductionEnvironment()` — sem outra mudança de lógica).
-- [ ] 1.3 Re-rodar a verificação do achado 1.5 (LOCK-01): `grep` por chamadores de `createAdmin`/`createInvite`/`acceptInvite`/`createInspectionReport`/escritas em `auditLog` fora de `server/db.ts`, agora contra o resultado do merge (item 1.5 abaixo) — confirmar que continua zero.
-- [ ] 1.4 Merge `multi-tenant → master` numa branch de teste primeiro (mesmo método já usado em 03/08 — `docs/RELATORIO_MERGE_MASTER_MULTITENANT.md`), revisar conflitos com você, comparar baseline do `tsc` antes/depois.
+- [x] ~~1.1 Criar `scripts/lock-tenant-not-null-fk-producao.ts`~~ ✅ **feito (22/08, commit `c575987`)** — `waterTankSensors` removida da lista `TABELAS`, comentário com referência ao LOCK-02. Original intocado (`git diff` confirmado pelo Claude Code).
+- [x] ~~1.2 Criar os outros 3 scripts `-producao.ts`~~ ✅ **feito (22/08, commit `c575987`)** — `migrate-to-multi-tenant-producao.ts`, `backfill-tenant-null-producao.ts`, `diagnostico-3.7.1f-fase0-producao.ts`. Originais e `server/lib/environment.ts` intocados.
+- [x] ~~1.3 Reverificar o LOCK-01 (achado 1.5)~~ ✅ **feito (22/08)** — zero chamadores de `createAdmin`/`createInvite`/`acceptInvite`/`createInspectionReport`/`auditLog` fora de `server/db.ts` em todo o repo (não só `server/`). Confirma o achado original. **Repetir mais uma vez no item 4.5, contra o código já mergeado** — o código pode mudar entre agora e o merge de 1.4.
+- [ ] 1.4 Merge `multi-tenant → master` numa branch de teste primeiro (mesmo método já usado em 03/08 — `docs/RELATORIO_MERGE_MASTER_MULTITENANT.md`), revisar conflitos com você, comparar baseline do `tsc` antes/depois. **Situação em 22/08:** master avançou só 9 commits desde a última sincronização (03/08), todos pequenos (upload/diagnóstico de Cloudinary) — merge deve ser tranquilo, mas confirmar na prática.
 - [ ] 1.5 `pnpm run build` local — precisa passar (exit 0) antes de seguir.
 
-**Validação:** build de produção passa, `tsc` não introduz erro novo (baseline atual: 32), os 4 scripts `-producao.ts` existem e apontam pra `assertProductionEnvironment()`, `lock-tenant-not-null-fk-producao.ts` não menciona `waterTankSensors`, diff revisado e aprovado por você.
+**Validação (1.1-1.3):** ✅ passou — `pnpm run check` (`tsc`) em 32 erros, igual ao baseline, nenhum nos 4 arquivos novos; `pnpm run build` exit 0. (Nota: precisou de `pnpm install` antes — faltava `vite-plugin-pwa` no `node_modules`, causa raiz de um erro que travava o `check` inteiro; não relacionado aos scripts novos, resolvido.)
+**Validação (1.4-1.5, pendente):** build de produção passa, `tsc` não introduz erro novo além do baseline, diff do merge revisado e aprovado por você.
 **Reversão:** é só código, ainda não tocou em VPS/banco — descartar a branch de teste se algo não fechar.
 
 ---
