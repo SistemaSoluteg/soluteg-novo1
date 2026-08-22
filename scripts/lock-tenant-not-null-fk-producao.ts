@@ -36,13 +36,19 @@ const TABELAS = [
   "budgetHistory",
   "budgetItems",
   "budgets",
-  "cashTransactions",
-  "categories",
+  // PDV (cashTransactions/categories/customers/products/saleItems/sales) REMOVIDO
+  // da lista de produção — achado LOCK-03 (22/08/2026, durante a Fase 10 do cutover):
+  // essas tabelas no MySQL são um ESPELHO do PDV (que roda em TiDB Cloud). O único
+  // caminho de escrita delas no MySQL é pdvRouter.migrate.fromTidb (server/routers/
+  // pdv.router.ts:421), que faz mysql.insert(table).values(chunk) SEM carimbar
+  // tenantId. Travar NOT NULL quebraria o próximo sync do TiDB (mesma classe do
+  // LOCK-02/waterTankSensors). PDV é tenant-1-only e gated (pdvProcedure), então
+  // tenantId nullable aqui é baixo risco. Pra travar depois: carimbar tenantId=1
+  // no fromTidb primeiro. Ver docs/PENDENCIAS_TECNICAS.md.
   "checklistInstances",
   "clientDocuments",
   "clients",
   "configuracoesTecnico",
-  "customers",
   "inspectionReports",
   "inspectionTasks",
   "invites",
@@ -52,11 +58,8 @@ const TABELAS = [
   "laudoTecnicos",
   "laudos",
   "notificationContacts",
-  "products",
   "pushSubscriptions",
   "reports",
-  "saleItems",
-  "sales",
   "technicians",
   "waterTankAlertLog",
   "waterTankFaultLog",
