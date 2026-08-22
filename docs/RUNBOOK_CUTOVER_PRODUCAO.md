@@ -1,6 +1,6 @@
 # Runbook — Cutover de Produção (Fase 3.7 Multi-tenant)
 
-> **Status:** 🟡 Fase 1 em andamento — itens 1.1-1.3 concluídos (22/08, commit `c575987`), faltam 1.4 (merge `multi-tenant→master`) e 1.5 (build). Não executar as Fases 2+ (mexem em VPS/banco) antes da Fase 1 estar 100% concluída e revisada.
+> **Status:** 🟡 Fase 1 quase concluída — 1.1-1.3 feitos (commit `c575987`); 1.4 **validado num branch de teste** (`test/sync-master-cutover`, zero conflito, build limpo, `tsc` idêntico ao baseline, LOCK-01 confirmado) mas **ainda não oficializado** nos branches reais — falta o aval do Thiago pra fazer o merge de verdade e dar push. Não executar as Fases 2+ (mexem em VPS/banco) antes da Fase 1 estar 100% concluída e revisada.
 > **Criado:** 22/08/2026, pela Claude "arquiteta" (foco segurança), a pedido do Thiago.
 > **Objetivo:** ser o roteiro único e sequenciado do cutover de produção — hoje esse trabalho está espalhado em `PENDENCIAS_DEPLOY_PRODUCAO.md`, `PLANO_3.7.1f.md` e o histórico do `ROADMAP.md`. Este documento não substitui os outros três (eles continuam com o detalhe de cada SQL) — ele é a **ordem de execução + os pontos de validação entre um passo e outro**.
 > **Escopo:** só a **produção**. Staging (`tst.soluteg.com.br`) já está com 3.7.1a–e, 3.7.2 e 3.7.1f validadas.
@@ -83,11 +83,12 @@ Cada fase abaixo: **o que faz**, **quem faz**, **pré-condição**, **validaçã
 - [x] ~~1.1 Criar `scripts/lock-tenant-not-null-fk-producao.ts`~~ ✅ **feito (22/08, commit `c575987`)** — `waterTankSensors` removida da lista `TABELAS`, comentário com referência ao LOCK-02. Original intocado (`git diff` confirmado pelo Claude Code).
 - [x] ~~1.2 Criar os outros 3 scripts `-producao.ts`~~ ✅ **feito (22/08, commit `c575987`)** — `migrate-to-multi-tenant-producao.ts`, `backfill-tenant-null-producao.ts`, `diagnostico-3.7.1f-fase0-producao.ts`. Originais e `server/lib/environment.ts` intocados.
 - [x] ~~1.3 Reverificar o LOCK-01 (achado 1.5)~~ ✅ **feito (22/08)** — zero chamadores de `createAdmin`/`createInvite`/`acceptInvite`/`createInspectionReport`/`auditLog` fora de `server/db.ts` em todo o repo (não só `server/`). Confirma o achado original. **Repetir mais uma vez no item 4.5, contra o código já mergeado** — o código pode mudar entre agora e o merge de 1.4.
-- [ ] 1.4 Merge `multi-tenant → master` numa branch de teste primeiro (mesmo método já usado em 03/08 — `docs/RELATORIO_MERGE_MASTER_MULTITENANT.md`), revisar conflitos com você, comparar baseline do `tsc` antes/depois. **Situação em 22/08:** master avançou só 9 commits desde a última sincronização (03/08), todos pequenos (upload/diagnóstico de Cloudinary) — merge deve ser tranquilo, mas confirmar na prática.
-- [ ] 1.5 `pnpm run build` local — precisa passar (exit 0) antes de seguir.
+- [x] ~~1.4 Validar o merge `master → multi-tenant` num branch de teste~~ ✅ **feito (22/08)** — branch `test/sync-master-cutover` (a partir de `origin/multi-tenant` em `01c39a7`), `git merge origin/master` (9 commits, todos upload/diagnóstico Cloudinary) **sem nenhum conflito** (auto-merge em `server/index.ts` e `src/pages/AdminBudgetDetail.tsx`, nada em `server/routers/*`/`drizzle/schema.ts`/`server/db.ts`). `pnpm install` limpo (lockfile não mudou). Branch de teste preservada, nada pushado pros branches reais.
+- [ ] **1.4b — Oficializar o merge de verdade** (fast-forward do `multi-tenant` real pro resultado validado + o merge final `multi-tenant → master`, que é literalmente o passo 1 do cutover) — **aguardando aval explícito do Thiago** antes de qualquer push nos branches reais.
+- [x] ~~1.5 `pnpm run build` local~~ ✅ **feito** (validado junto do item 1.4, exit 0).
 
 **Validação (1.1-1.3):** ✅ passou — `pnpm run check` (`tsc`) em 32 erros, igual ao baseline, nenhum nos 4 arquivos novos; `pnpm run build` exit 0. (Nota: precisou de `pnpm install` antes — faltava `vite-plugin-pwa` no `node_modules`, causa raiz de um erro que travava o `check` inteiro; não relacionado aos scripts novos, resolvido.)
-**Validação (1.4-1.5, pendente):** build de produção passa, `tsc` não introduz erro novo além do baseline, diff do merge revisado e aprovado por você.
+**Validação (1.4):** ✅ passou — build limpo, `tsc` idêntico byte a byte ao baseline (32 erros, mesmo conjunto exato de arquivo+linha+mensagem), LOCK-01 reverificado pós-merge (zero chamadores). Nada bloqueando o merge real.
 **Reversão:** é só código, ainda não tocou em VPS/banco — descartar a branch de teste se algo não fechar.
 
 ---
