@@ -676,9 +676,11 @@ Depois, limpeza manual do que o script reporta como "decisão manual" (`configur
 
 ---
 
-## 12. Fase 10 — Travamento NOT NULL + FK 🔧
+## 12. Fase 10 — Travamento NOT NULL + FK 🔧 ✅ CONCLUÍDA (22/08)
 
-Trava `tenantId` (`NOT NULL` + FK → `tenants(id)`) nas **31 tabelas** que têm 0 NULL e write-path que carimba tenant. Depende de: Fase 9 (0 NULL — ✅) e reverificação LOCK-01 (feita — zero chamador externo de `createAdmin`/`createInvite`/`acceptInvite`/`createInspectionReport`/`auditLog`).
+> **Resultado (22/08):** `Sucesso: 32/32` — todas travadas com `NOT NULL` + FK → `tenants(id)`, incluindo `waterTankMonitoring` (~155k linhas, passou sem incidente). PDV (6 tabelas) corretamente fora (LOCK-03). Rodado do checkout de staging com `cwd` no dir de produção.
+
+Trava `tenantId` (`NOT NULL` + FK → `tenants(id)`) nas **32 tabelas** que têm 0 NULL e write-path que carimba tenant. Depende de: Fase 9 (0 NULL — ✅) e reverificação LOCK-01 (feita — zero chamador externo de `createAdmin`/`createInvite`/`acceptInvite`/`createInspectionReport`/`auditLog`).
 
 > **Achado LOCK-03 (22/08, na preparação desta fase):** o script de produção incluía as 6 tabelas do **PDV** (`cashTransactions`/`categories`/`customers`/`products`/`saleItems`/`sales`), mas elas no MySQL são um **espelho** do PDV (que roda em **TiDB Cloud**); o único writer no MySQL é `pdvRouter.migrate.fromTidb` (`server/routers/pdv.router.ts:421`), que faz `insert().values(chunk)` **sem `tenantId`**. Travar `NOT NULL` quebraria o próximo sync (mesma classe do LOCK-02). Staging não pegou isso porque lá o `fromTidb` nunca rodou (sem `PDV_DATABASE_URL`). **Removidas da lista de produção** (commit da Fase 10). PDV é tenant-1-only e gated (`pdvProcedure`) → nullable ali é baixo risco. Pra travar depois: carimbar `tenantId=1` no `fromTidb` primeiro.
 
@@ -693,7 +695,7 @@ pnpm tsx /var/www/soluteg-staging/scripts/lock-tenant-not-null-fk-producao.ts
 
 > ⚠️ **`waterTankMonitoring` é a tabela pesada** (~155k linhas + inserts MQTT ao vivo). O `ALTER ... MODIFY ... NOT NULL` reconstrói a tabela e pode **travá-la por alguns segundos a ~1 min**, com a ingestão MQTT esperando nesse intervalo. Fazer na janela de baixo uso; é transitório.
 
-**Validação:** o script para no primeiro erro (não deixa tabela em estado parcial) e valida `IS_NULLABLE`+FK via `information_schema` a cada tabela — conferir o resumo final (`Sucesso: 31/31`).
+**Validação:** o script para no primeiro erro (não deixa tabela em estado parcial) e valida `IS_NULLABLE`+FK via `information_schema` a cada tabela — conferir o resumo final (`Sucesso: 32/32`).
 **Reversão:** por tabela, `ALTER TABLE <t> DROP FOREIGN KEY fk_<t>_tenant` + `MODIFY COLUMN tenantId INT NULL` (igual à reversão do LOCK-02 em staging).
 
 ---
