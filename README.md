@@ -33,6 +33,7 @@ Estes são os documentos vivos do projeto. Comece sempre pelos quatro primeiros:
 | [`docs/ALARMS.md`](./docs/ALARMS.md) | Regras de negócio do sistema de alarmes de caixa d'água |
 | [`docs/DATA_PROTECTION.md`](./docs/DATA_PROTECTION.md) | Regras críticas de proteção de dados |
 | [`docs/PENDENCIAS_TECNICAS.md`](./docs/PENDENCIAS_TECNICAS.md) | Dívida técnica conhecida e histórico de auditorias de segurança |
+| [`docs/RUNBOOK_CUTOVER_PRODUCAO.md`](./docs/RUNBOOK_CUTOVER_PRODUCAO.md) | Roteiro passo a passo do cutover de produção (rascunho) |
 
 ### Histórico (`docs/archive/`)
 

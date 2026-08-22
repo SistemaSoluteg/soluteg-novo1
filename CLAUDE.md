@@ -4,7 +4,7 @@
 > Contém o **contexto operacional vivo** — o que está sendo feito agora, regras invioláveis, comandos comuns.
 > Para visão arquitetural completa, ver [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDOFF.md).
 
-**Última atualização:** 22/08/2026 (novo fluxo de trabalho: Claude "arquiteta" planeja/documenta, Claude Code no VS Code executa, Antigravity descontinuada — §5.2. Estado técnico inalterado: 3.7.2 + 3.7.1f concluídas e validadas em staging; próximo passo é o cutover de produção)
+**Última atualização:** 22/08/2026 (novo fluxo de trabalho: Claude "arquiteta" planeja/documenta, Claude Code no VS Code executa, Antigravity descontinuada — §5.2. Rascunho do `docs/RUNBOOK_CUTOVER_PRODUCAO.md` criado, com 4 achados críticos a resolver antes de executar. Estado técnico inalterado: 3.7.2 + 3.7.1f concluídas e validadas em staging; próximo passo é o cutover de produção)
 
 ---
 
@@ -54,7 +54,7 @@ Cada router isolado é validado com **ghost-probe**: criar um registro sob outro
 - ✅ Sub-fase 3.7.2 (Escala, router 3/N): Router `workOrders` isolado e **validado em staging** (14/08). Além do router tRPC (Método B + guardas multi-etapa nos sub-routers), foram cobertos: 2 rotas Express legadas (`GET`/`POST /api/work-orders`), 3 caminhos extras de criação de OS (`workOrdersRecurrence`, `budgets.approve`/`generateOs`), e uma **guarda fail-closed** em `workOrdersDb.createWorkOrder` que expôs mais 3 call sites de sistema (`monthlyOsJob` 2x, `waterTankAlertService`) — todos corrigidos. Ghost-probe cross-tenant OK; backfill de 1 OS órfã (`tenantId=NULL`) feita no staging. Sub-router `metrics` adiado (dívida técnica); `GET /api/admin-metrics` sem auth registrado como `SEC-01`. Detalhes na seção 8.10 do [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDOFF.md).
 
 ### Próxima
-**Cutover de produção** — 3.7.2 e 3.7.1f concluídas e validadas **em staging**; produção ainda com ZERO do multi-tenant (checklist inteiro ⏳ no `PENDENCIAS_DEPLOY_PRODUCAO.md`). É um evento único, com backup e janela de baixo uso: (1) merge `multi-tenant → master` → (2) `mysqldump` de backup → (3) migrações de schema (centrais + colunas `tenantId`) → (4) migração de dados (criar tenants + carimbar `tenantId=1`) → (5) `deploy-app` → (6) backfill de residuais → (7) ALTERs da 3.7.1f (NOT NULL + FK, exceto `notificationLogs`) → (8) rotação do `JWT_SECRET` (método "sem echo", horário de baixo uso). Runbook detalhado a montar quando definir a janela.
+**Cutover de produção** — 3.7.2 e 3.7.1f concluídas e validadas **em staging**; produção ainda com ZERO do multi-tenant (checklist inteiro ⏳ no `PENDENCIAS_DEPLOY_PRODUCAO.md`). É um evento único, com backup e janela de baixo uso. **Runbook detalhado (13 fases) em [`docs/RUNBOOK_CUTOVER_PRODUCAO.md`](./docs/RUNBOOK_CUTOVER_PRODUCAO.md), criado 22/08/2026 — ainda 🔴 RASCUNHO.** Antes de executar, o runbook levanta 4 achados críticos que precisam de decisão/correção primeiro: os 4 scripts de migração (`migrate-to-multi-tenant.ts` etc.) recusam produção de propósito (`assertStagingEnvironment()`); `scripts/lock-tenant-not-null-fk.ts` está desatualizado e reproduziria o LOCK-02 (`waterTankSensors`) se usado como está; a migration `0032` mistura tabelas novas com tabelas que produção já deve ter por outro caminho; e uma referência de arquivo desatualizada no `PENDENCIAS_DEPLOY_PRODUCAO.md` (já corrigida).
 
 **Sub-fase 3.7.1f — travamento final (✅ CONCLUÍDA EM STAGING, 16/08; ajustada em 20/08):** backfill (0 NULL residual) → `tenantId NOT NULL` + FK `→ tenants.id` em 40 tabelas (`notificationLogs` e `waterTankSensors` de fora) → rotação do `JWT_SECRET` validada. Scripts: `scripts/diagnostico-3.7.1f-fase0.ts`, `scripts/lock-tenant-not-null-fk.ts`, `scripts/backfill-tenant-null.ts`, `scripts/diag-mqtt-listen.mjs`. **Cuidados registrados (valem para o cutover de produção):**
 - **Excluir `notificationLogs` do NOT NULL** — o write-path (`server/lib/notifications.ts:223`) insere sem carimbar `tenantId`, então acumula NULL; é tabela de log (baixa sensibilidade). Corrigir o carimbo fica pra 3.7.9 (que reescreve o fluxo de notificações); até lá `notificationLogs.tenantId` continua nullable.
@@ -337,4 +337,5 @@ Detalhes e plano em [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDOFF.md) seç�
 | Regras de proteção de dados | [`docs/DATA_PROTECTION.md`](./docs/DATA_PROTECTION.md) |
 | Histórico de auditorias / dívida técnica detalhada | [`docs/PENDENCIAS_TECNICAS.md`](./docs/PENDENCIAS_TECNICAS.md) |
 | O que precisa replicar em produção | [`PENDENCIAS_DEPLOY_PRODUCAO.md`](./PENDENCIAS_DEPLOY_PRODUCAO.md) |
+| Roteiro passo a passo do cutover de produção | [`docs/RUNBOOK_CUTOVER_PRODUCAO.md`](./docs/RUNBOOK_CUTOVER_PRODUCAO.md) |
 | Histórico congelado (não atualizar) | `docs/archive/` |

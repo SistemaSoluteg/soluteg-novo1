@@ -222,7 +222,7 @@ AND TABLE_NAME IN ('auditLog', 'loginAttempts', 'migrationAuditLog');
 
 #### Passo 1 — Corrigir collation das tabelas de auditoria (0042)
 
-Arquivo: `drizzle/migrations/0042_collation_fix_audit_tables.sql`
+Arquivo: `drizzle/migrations/0043_collation_fix_audit_tables.sql` (renomeado de `0042` para `0043` na sincronização master→multi-tenant de 03/08/2026, para não colidir com `0042_client_equipment.sql` vindo da master — ver `docs/RELATORIO_MERGE_MASTER_MULTITENANT.md` §6.1. Achado ao montar o `docs/RUNBOOK_CUTOVER_PRODUCAO.md`, 22/08/2026.)
 
 ```sql
 ALTER TABLE `auditLog` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
