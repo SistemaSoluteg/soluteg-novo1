@@ -509,17 +509,70 @@ SELECT
 
 ## 9. Fase 7 — Migração de dados 🔧
 
-Depende da Fase 1.2 (`scripts/migrate-to-multi-tenant-producao.ts` criado) estar pronta.
+**Pré-condição:** Fase 6 concluída (✅). Script `scripts/migrate-to-multi-tenant-producao.ts` já criado (Fase 1.2) e **revisado em 22/08** — diff contra o original de staging confirma que só mudam os comentários + a troca `assertStagingEnvironment()` → `assertProductionEnvironment()`; a lógica é idêntica à versão que rodou e validou em staging (carimbou 109.230 linhas). Aprovado pra uso.
 
+### O que o script faz (5 etapas)
+1. **Etapa 0 — pré-validações:** aborta se `DB_NAME` não for `d5ea2e96_solutegdb`; confere que as 3 tabelas de auditoria, as 5 centrais e a coluna `tenantId` nas 38 operacionais existem (tudo já garantido pela Fase 6). Imprime as contagens atuais de `clients`/`workOrders`/`budgets`/`products`.
+2. **Etapa 1 — 2 ALTERs estruturais** (idempotentes, checam existência antes): `condominiums.type` (`varchar(40) NOT NULL DEFAULT 'condominio'`) e `clients.gestorId` (`int NULL`, sem FK por ora — `gestors` está vazia).
+3. **Etapa 2 — cria 2 tenants:** `jnc` (id=1) e `soluteg-direto` (id=2, `isPlatformTenant=1`).
+4. **Etapa 3 — carimba `tenantId=1`** nas 38 tabelas operacionais, só onde `tenantId IS NULL` (idempotente).
+5. **Etapa 4 — cria o `platformAdmin`** `Thiago Lopes` / `thiagodll69@gmail.com` (senha pedida interativamente, mín. 12 caracteres, bcrypt cost 12).
+As etapas 2–4 rodam **dentro de uma transação** (ROLLBACK automático em erro). Cada passo é gravado em `migrationAuditLog`.
+
+### Onde rodar
+Via **SSH no VPS**, a partir do diretório cujo `.env` aponta pra produção (`DB_NAME=d5ea2e96_solutegdb` + `DATABASE_URL` de produção):
 ```bash
-# via SSH no VPS, apontando pro .env de produção
-pnpm tsx scripts/migrate-to-multi-tenant-producao.ts          # dry-run primeiro
-pnpm tsx scripts/migrate-to-multi-tenant-producao.ts --apply  # aplica de verdade
+cd /var/www/soluteg/backend
 ```
-Cria os tenants `jnc` (id=1) e `soluteg-direto` (id=2), carimba `tenantId=1` nas 38 tabelas operacionais (só onde `tenantId IS NULL`, idempotente), cria o `platformAdmin` (pede senha interativamente, mín. 12 caracteres).
 
-**Validação:** o próprio script roda a Etapa 5 (validações finais: zero NULL residual, `tenantId` aponta pra tenant válido, contagens mínimas de `clients`/`workOrders`/`budgets`/`products`) e aborta com exit 1 se algo falhar.
-**Reversão:** o script já roda dentro de uma transação para as etapas de dados (2–4); um erro no meio faz `ROLLBACK` automático. Se precisar desfazer depois de commitado, restaurar do backup.
+### Passo 1 — DRY-RUN (não escreve nada)
+```bash
+pnpm tsx scripts/migrate-to-multi-tenant-producao.ts
+```
+**Confira na saída:** ambiente confirmado como PRODUÇÃO; as contagens de `clients`/`workOrders`/`budgets`/`products` (devem ser ≥ 29/76/19/270 — se alguma vier **abaixo** do mínimo, **pare** e me avise, é sinal de dado faltando); e o total de linhas que *seria* carimbado (deve bater com a soma das linhas das 38 tabelas). Nenhum tenant/admin criado ainda — normal no dry-run.
+
+### Passo 2 — APPLY (aplica de verdade)
+```bash
+pnpm tsx scripts/migrate-to-multi-tenant-producao.ts --apply
+```
+Vai pedir, **em sessão interativa (TTY)**:
+1. digitar **`CONFIRMAR`** (qualquer outra coisa aborta);
+2. a **senha do platformAdmin** duas vezes (mín. 12 caracteres) — é a senha de login do Thiago como dono da plataforma.
+
+> ⚠️ **Detalhe do fluxo:** os 2 ALTERs da Etapa 1 rodam **antes** do prompt `CONFIRMAR` (DDL causa commit implícito no MySQL, então ficam fora da transação). Se você abortar no `CONFIRMAR`, `condominiums.type`/`clients.gestorId` podem já ter sido criadas — **sem problema:** são aditivas, idempotentes e a `condominiums` está vazia. Rodar de novo apenas as pula.
+
+### Validação (dupla — a do script + a manual)
+O script roda a **Etapa 5** sozinho (zero NULL residual nas 38 tabelas, `tenantId` apontando pra tenant válido em `clients`/`workOrders`/`budgets`/`products`, contagens mínimas) e sai com **exit 1** se algo falhar. Além disso, confirme no **DBeaver** (independente do script — lição do dia 22/08):
+```sql
+-- (a) 2 tenants criados
+SELECT id, slug, name, isPlatformTenant FROM tenants ORDER BY id;
+-- Esperado: id=1 jnc, id=2 soluteg-direto
+
+-- (b) 1 platformAdmin criado
+SELECT id, name, email, active FROM platformAdmins;
+-- Esperado: 1 linha (Thiago Lopes)
+
+-- (c) ZERO tenantId NULL — a varredura das 38 tabelas é feita pela Etapa 5 do
+--     próprio script (SQL puro não conta NULLs em 38 tabelas dinamicamente).
+--     No DBeaver, faça a checagem pontual nas 4 principais:
+SELECT
+  (SELECT COUNT(*) FROM `clients`    WHERE tenantId IS NULL) AS clients_null,
+  (SELECT COUNT(*) FROM `workOrders` WHERE tenantId IS NULL) AS workorders_null,
+  (SELECT COUNT(*) FROM `budgets`    WHERE tenantId IS NULL) AS budgets_null,
+  (SELECT COUNT(*) FROM `products`   WHERE tenantId IS NULL) AS products_null;
+-- Esperado: 0, 0, 0, 0
+
+-- (d) tenantId sempre aponta pra tenant válido (sem órfão referencial)
+SELECT
+  (SELECT COUNT(*) FROM `clients`    WHERE tenantId NOT IN (SELECT id FROM tenants)) AS clients_orfaos,
+  (SELECT COUNT(*) FROM `workOrders` WHERE tenantId NOT IN (SELECT id FROM tenants)) AS workorders_orfaos;
+-- Esperado: 0, 0
+```
+> A varredura completa das 38 tabelas fica por conta da **Etapa 5 do script** (aborta com exit 1 se achar qualquer NULL residual). O DBeaver acima é a conferência independente das principais.
+
+**Reversão:** as etapas de dados (2–4) estão em transação — erro no meio faz `ROLLBACK` sozinho. Os 2 ALTERs da Etapa 1 são aditivos/idempotentes (baixo risco). Se precisar desfazer **depois** de commitado, restaurar do backup da Fase 3 (`backup-pre-cutover-20260822-144218.sql`).
+
+> **Ainda NÃO rodar `deploy-app` depois desta fase** — o código só entra na Fase 8, e só depois do backfill (Fase 9) o sistema fica consistente.
 
 ---
 
