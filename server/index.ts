@@ -772,8 +772,29 @@ async function startServer() {
   // ou para sobrescrever um valor manualmente.
   // ============================================================
   app.post("/api/water-tank-monitoring", requireAdminAuth, async (req, res) => {
-    try {
-      const { clientId, adminId, tankName, levelPercentage, capacity, notes } = req.body;
+    try { // ISOLADO COM GUARDA (SEC-02/SEC-03)
+      // 1. Resolver adminId e tenantId a partir do cookie (nunca do body — mesmo padrão
+      // do DELETE /api/client-documents/:id acima).
+      const token = parseCookies(req)["admin_token"];
+      const payload = verifyToken(token);
+      if (!payload?.adminId) {
+        return res.status(401).json({ message: "Token de admin inválido" });
+      }
+      const adminId = payload.adminId;
+
+      const { getDb } = await import("./db");
+      const { admins } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return res.status(503).json({ message: "Banco indisponível" });
+
+      const [adminRow] = await db.select({ tenantId: admins.tenantId }).from(admins).where(eq(admins.id, adminId)).limit(1);
+      const adminTenantId = adminRow?.tenantId;
+      if (!adminTenantId) {
+        return res.status(403).json({ message: "Admin não associado a um tenant." });
+      }
+
+      const { clientId, tankName, levelPercentage, capacity, notes } = req.body;
 
       if (!clientId || !tankName || levelPercentage == null) {
         return res.status(400).json({ message: "clientId, tankName e levelPercentage são obrigatórios" });
@@ -784,12 +805,16 @@ async function startServer() {
         return res.status(400).json({ message: "levelPercentage deve ser um número entre 0 e 100" });
       }
 
-      // Resolver adminId (se não fornecido) e tenantId (sempre, via cliente) —
-      // carimbo best-effort, sem fail-closed (mesma regra da ingestão MQTT).
+      // 2. Buscar cliente e aplicar guarda de tenant. Esta é uma ação de admin
+      // logado na UI (não a ingestão MQTT best-effort), então pode fail-closed.
       const { getClientById } = await import("./db");
       const clientRecord = await getClientById(parseInt(clientId));
-      if (!clientRecord) return res.status(404).json({ message: "Cliente não encontrado" });
-      const resolvedAdminId = adminId || clientRecord.adminId;
+
+      // GUARDA: cliente precisa pertencer ao tenant do admin logado.
+      if (!clientRecord || clientRecord.tenantId !== adminTenantId) {
+        return res.status(404).json({ message: "Cliente não encontrado" });
+      }
+      const resolvedAdminId = adminId;
 
       const { saveWaterTankReading } = await import("./waterTankDb");
       await saveWaterTankReading({
