@@ -1,6 +1,6 @@
 # Runbook — Cutover de Produção (Fase 3.7 Multi-tenant)
 
-> **Status:** 🔴 RASCUNHO — não executar ainda. Há achados críticos (seção 1) que precisam de decisão antes deste runbook virar um roteiro executável.
+> **Status:** 🟡 DECISÕES TOMADAS, código ainda não preparado — ver seção 1. Não executar antes da Fase 1 (💻 Claude Code) estar concluída e revisada.
 > **Criado:** 22/08/2026, pela Claude "arquiteta" (foco segurança), a pedido do Thiago.
 > **Objetivo:** ser o roteiro único e sequenciado do cutover de produção — hoje esse trabalho está espalhado em `PENDENCIAS_DEPLOY_PRODUCAO.md`, `PLANO_3.7.1f.md` e o histórico do `ROADMAP.md`. Este documento não substitui os outros três (eles continuam com o detalhe de cada SQL) — ele é a **ordem de execução + os pontos de validação entre um passo e outro**.
 > **Escopo:** só a **produção**. Staging (`tst.soluteg.com.br`) já está com 3.7.1a–e, 3.7.2 e 3.7.1f validadas.
@@ -19,13 +19,14 @@
 
 ---
 
-## 1. Achados críticos — resolver ANTES de qualquer execução
+## 1. Achados críticos — decisões tomadas em 22/08/2026
 
-Revisei os 4 scripts de migração (`scripts/migrate-to-multi-tenant.ts`, `scripts/backfill-tenant-null.ts`, `scripts/lock-tenant-not-null-fk.ts`, `scripts/diagnostico-3.7.1f-fase0.ts`) e as migrations envolvidas. Achei 4 problemas que, se ignorados, ou impedem o cutover de rodar, ou **reproduzem em produção bugs que já apareceram e foram corrigidos em staging**. Nenhum foi corrigido ainda — preciso da sua decisão sobre a abordagem antes de escrever os prompts pro Claude Code.
+Revisei os 4 scripts de migração (`scripts/migrate-to-multi-tenant.ts`, `scripts/backfill-tenant-null.ts`, `scripts/lock-tenant-not-null-fk.ts`, `scripts/diagnostico-3.7.1f-fase0.ts`) e as migrations envolvidas. Achei 4 problemas que, se ignorados, ou impedem o cutover de rodar, ou **reproduzem em produção bugs que já apareceram e foram corrigidos em staging**. As decisões abaixo já foram tomadas com o Thiago — falta só a execução (Fase 1, 💻 Claude Code).
 
 ### 1.1 — Os 4 scripts recusam produção de propósito
 Todos chamam `assertStagingEnvironment()` (`server/lib/environment.ts:25`), que **lança erro imediatamente** se `DB_NAME` for o de produção (`d5ea2e96_solutegdb`). Isso é uma trava de segurança deliberada — mas significa que nenhum dos 4 scripts roda contra produção do jeito que está hoje. Já existe `assertProductionEnvironment()` pronta no mesmo arquivo, feita exatamente pra esse caso ("scripts de deploy formal que só devem tocar em produção").
-**Preciso decidir com você:** cada script vira uma cópia `-producao.ts` (mais claro, mas duplica lógica — risco de divergir com o tempo), ou os 4 ganham uma flag `--producao` que troca qual assert chamar (fonte única, mas o script fica um pouco mais genérico)? Ver seção 6 (Fase 1) — vou propor uma recomendação, mas quero seu aval antes de mandar pro Claude Code.
+
+**✅ Decisão (22/08):** cópia dedicada para cada script — `*-producao.ts` ao lado do original, chamando `assertProductionEnvironment()` no lugar de `assertStagingEnvironment()`. Mais explícito que uma flag (o nome do arquivo já avisa "isso aqui mexe em produção") e evita o risco de esquecer a flag numa execução manual às 2h da manhã. O trade-off (duas cópias podem divergir com o tempo) é aceitável porque esses scripts são de uso único (cutover) — depois de rodados em produção, não voltam a ser tocados.
 
 ### 1.2 — `scripts/lock-tenant-not-null-fk.ts` está desatualizado (reproduziria o LOCK-02)
 A lista `TABELAS` do script (commit `23aec7c`, 19/08) **ainda inclui `waterTankSensors`**. Só que no dia seguinte (20/08), o achado `LOCK-02` mostrou que travar essa tabela com `NOT NULL` quebra **100% da ingestão MQTT** (`upsertSensorDevice()` faz `INSERT...ON DUPLICATE KEY UPDATE` sem carimbar `tenantId`) — foi revertida manualmente em staging, mas o script no repo nunca foi atualizado pra refletir isso. **Se rodarmos este script como está contra produção, reproduzimos o mesmo apagão de sensores que já tivemos em staging.** Precisa remover `waterTankSensors` da lista (mesma categoria do `notificationLogs`/NOTIF-01) antes de cogitar usá-lo em produção.
@@ -39,9 +40,16 @@ migrationAuditLog, normaTrechos, notificationLogs, pushSubscriptions
 As 3 primeiras (bold) são realmente novas para produção. Mas `laudoCitacoes`, `laudoTipos`, `normaTrechos`, `notificationLogs` e `pushSubscriptions` são de features que **já parecem estar em produção** (laudos com citações normativas, push notifications — Fase 3.6 "infra pronta"), só que chegaram lá por outro caminho de migration, não por este arquivo squashado que o merge da branch `multi-tenant` gerou. **Rodar o arquivo `0032` inteiro em produção provavelmente falha** (`CREATE TABLE` em tabela que já existe) e, pior, se alguém "resolver" isso rodando statement por statement sem checar, corre o risco de recriar uma tabela que já tem dados. A Fase 4 deste runbook (diagnóstico) trata isso explicitamente: checar tabela por tabela antes de aplicar qualquer `CREATE TABLE`.
 
 ### 1.4 — Referência de arquivo desatualizada no `PENDENCIAS_DEPLOY_PRODUCAO.md`
-Esse documento (seção 3.7.1b, "Passo 1") aponta para `drizzle/migrations/0042_collation_fix_audit_tables.sql` — mas esse arquivo foi **renomeado para `0043_collation_fix_audit_tables.sql`** durante a sincronização master→multi-tenant de 03/08/2026 (colidia com `0042_client_equipment.sql`, que veio da master). O arquivo `0042` correto hoje é sobre `client_equipment`, não collation. Vou corrigir essa referência no próprio `PENDENCIAS_DEPLOY_PRODUCAO.md` quando formos executar essa fase.
+Esse documento (seção 3.7.1b, "Passo 1") apontava para `drizzle/migrations/0042_collation_fix_audit_tables.sql` — mas esse arquivo foi **renomeado para `0043_collation_fix_audit_tables.sql`** durante a sincronização master→multi-tenant de 03/08/2026 (colidia com `0042_client_equipment.sql`, que veio da master). **✅ Corrigido** direto no `PENDENCIAS_DEPLOY_PRODUCAO.md` em 22/08.
 
-**Nenhum desses 4 pontos bloqueia a gente de aprovar o *formato* do runbook agora — mas todos bloqueiam a Fase 1 (preparação de código). Trato isso na seção 6.**
+### 1.5 — LOCK-01 (`admins`/`auditLog`/`invites`/`inspectionReports`): travar mesmo com writer morto — ✅ decisão confirmada (22/08)
+Verifiquei via `grep` em todo o `server/` (branch `multi-tenant`) se `createAdmin`, `createInvite`/`acceptInvite`, `createInspectionReport` ou qualquer escrita em `auditLog` têm algum chamador fora do próprio `server/db.ts` — **zero resultados**. Os 4 escritores estão mesmo mortos hoje.
+
+**Decisão:** travar as 4 com `NOT NULL` + FK no cutover, igual staging. Razão: uma coluna `tenantId` nullable é um convite silencioso a bug — quando alguém construir a UI de criar admin (3.7.4), o fluxo de convite (3.7.6) ou o registro de auditoria (3.7.7) e esquecer de carimbar `tenantId`, o `NOT NULL` faz o `INSERT` falhar **na hora**, não meses depois como um vazamento cross-tenant descoberto por acidente. Custo de travar agora: zero (nada escreve nessas tabelas hoje; as linhas existentes de `admins`/`invites`/`inspectionReports` já são cobertas pelo backfill padrão da Fase 7, igual as outras 38 tabelas).
+
+**Único risco residual:** um caminho de escrita que esse `grep` não pegou (script solto, endpoint REST esquecido). Mitigação: repetir a mesma verificação (Fase 4, item 4.5 abaixo) contra o código **final mergeado** (`multi-tenant → master`) que efetivamente vai pra produção, não só contra o snapshot de hoje.
+
+**Nenhum desses 5 pontos bloqueia a gente de aprovar o *formato* do runbook agora — mas todos bloqueiam a Fase 1 (preparação de código). Trato isso na seção 3.
 
 ---
 
@@ -69,15 +77,16 @@ Cada fase abaixo: **o que faz**, **quem faz**, **pré-condição**, **validaçã
 
 ## 3. Fase 1 — Preparar o código 💻
 
-**Pré-condição:** você aprovar a abordagem para os pontos 1.1 e 1.2 acima.
+**Pré-condição:** nenhuma — todas as decisões da seção 1 já foram tomadas (22/08).
 
-- [ ] 1.1 Corrigir `scripts/lock-tenant-not-null-fk.ts`: remover `waterTankSensors` da lista `TABELAS`, comentar por quê (LOCK-02), referenciar `docs/PENDENCIAS_TECNICAS.md`.
-- [ ] 1.2 Adaptar os 4 scripts de migração para suportar produção (formato a definir com você — cópia dedicada vs. flag `--producao`).
-- [ ] 1.3 Merge `multi-tenant → master` numa branch de teste primeiro (mesmo método já usado em 03/08 — `docs/RELATORIO_MERGE_MASTER_MULTITENANT.md`), revisar conflitos com você, comparar baseline do `tsc` antes/depois.
-- [ ] 1.4 `pnpm run build` local — precisa passar (exit 0) antes de seguir.
-- [ ] 1.5 Corrigir a referência de arquivo no `PENDENCIAS_DEPLOY_PRODUCAO.md` (achado 1.4).
+- [x] ~~1.0 Decisões de abordagem (achados 1.1–1.5)~~ ✅ confirmadas com o Thiago em 22/08
+- [ ] 1.1 Criar `scripts/lock-tenant-not-null-fk-producao.ts` (cópia de `lock-tenant-not-null-fk.ts`): usar `assertProductionEnvironment()`, e **remover `waterTankSensors` da lista `TABELAS`** (o original em staging não deve ser alterado — ele documenta o que staging tem hoje; a correção entra só na cópia de produção, comentada com referência ao LOCK-02/`docs/PENDENCIAS_TECNICAS.md`).
+- [ ] 1.2 Criar `scripts/migrate-to-multi-tenant-producao.ts`, `scripts/backfill-tenant-null-producao.ts` e `scripts/diagnostico-3.7.1f-fase0-producao.ts` (cópias dos 3 restantes, trocando `assertStagingEnvironment()` por `assertProductionEnvironment()` — sem outra mudança de lógica).
+- [ ] 1.3 Re-rodar a verificação do achado 1.5 (LOCK-01): `grep` por chamadores de `createAdmin`/`createInvite`/`acceptInvite`/`createInspectionReport`/escritas em `auditLog` fora de `server/db.ts`, agora contra o resultado do merge (item 1.5 abaixo) — confirmar que continua zero.
+- [ ] 1.4 Merge `multi-tenant → master` numa branch de teste primeiro (mesmo método já usado em 03/08 — `docs/RELATORIO_MERGE_MASTER_MULTITENANT.md`), revisar conflitos com você, comparar baseline do `tsc` antes/depois.
+- [ ] 1.5 `pnpm run build` local — precisa passar (exit 0) antes de seguir.
 
-**Validação:** build de produção passa, `tsc` não introduz erro novo (baseline atual: 32), diff revisado e aprovado por você.
+**Validação:** build de produção passa, `tsc` não introduz erro novo (baseline atual: 32), os 4 scripts `-producao.ts` existem e apontam pra `assertProductionEnvironment()`, `lock-tenant-not-null-fk-producao.ts` não menciona `waterTankSensors`, diff revisado e aprovado por você.
 **Reversão:** é só código, ainda não tocou em VPS/banco — descartar a branch de teste se algo não fechar.
 
 ---
@@ -85,7 +94,7 @@ Cada fase abaixo: **o que faz**, **quem faz**, **pré-condição**, **validaçã
 ## 4. Fase 2 — Janela de execução 🗂️🔧
 
 - [ ] Escolher horário de baixo uso (madrugada, conforme já é praxe no projeto).
-- [ ] Decidir se avisa os ~29 clientes ativos de uma manutenção rápida (a Fase 11 — rotação de JWT — desloga todo mundo).
+- [x] ~~Decidir se avisa os clientes~~ ✅ **Confirmado (22/08): sim, avisar.** Falta definir o texto do aviso e a antecedência — sugestão: WhatsApp em massa (o próprio módulo do sistema) 24-48h antes, avisando "manutenção programada de madrugada, sistema pode ficar indisponível por alguns minutos e vai pedir login novo depois".
 - [ ] Confirmar que você terá tempo pra rodar o runbook inteiro numa sentada — não é recomendável parar no meio com o banco em estado intermediário por muito tempo.
 
 ---
@@ -132,6 +141,8 @@ SELECT COLUMN_NAME FROM information_schema.COLUMNS
 WHERE TABLE_SCHEMA = 'd5ea2e96_solutegdb' AND TABLE_NAME = 'client_equipment';
 ```
 
+**4.5 — Reverificação do LOCK-01 (achado 1.5):** contra o código do merge final (`multi-tenant → master`, resultado da Fase 1.4), confirmar de novo que `createAdmin`, `createInvite`/`acceptInvite`, `createInspectionReport` e qualquer escrita em `auditLog` não têm chamador fora de `server/db.ts`. Se algum aparecer (por exemplo, algo que a `master` trouxe e o merge não tinha antes), **parar e decidir com a arquiteta** se essa tabela também vai pro NOT NULL ou fica de fora — não travar às cegas.
+
 Rodar também as 3 pré-validações do legado (duplicatas em `budgetNumber`/`approvalToken`/`username`/`deviceId`, NULLs em `cashTransactions`/`saleItems`/`sales`, tamanho de `technicianSignature`) — SQL completo em [`PENDENCIAS_DEPLOY_PRODUCAO.md`](../PENDENCIAS_DEPLOY_PRODUCAO.md) seção "Checklist de pré-deploy".
 
 **Validação:** os resultados de 4.1–4.4 definem exatamente o que falta aplicar nas Fases 5–6 (e se as 3 pré-validações do legado acusarem algo > 0, paramos e corrigimos os dados antes de seguir).
@@ -173,12 +184,12 @@ sed 's|--> statement-breakpoint||g' drizzle/0034_wonderful_vulcan.sql | \
 
 ## 9. Fase 7 — Migração de dados 🔧
 
-Depende da Fase 1.2 (script adaptado pra produção) estar pronta.
+Depende da Fase 1.2 (`scripts/migrate-to-multi-tenant-producao.ts` criado) estar pronta.
 
 ```bash
 # via SSH no VPS, apontando pro .env de produção
-pnpm tsx scripts/migrate-to-multi-tenant.ts --producao          # dry-run primeiro
-pnpm tsx scripts/migrate-to-multi-tenant.ts --producao --apply  # aplica de verdade
+pnpm tsx scripts/migrate-to-multi-tenant-producao.ts          # dry-run primeiro
+pnpm tsx scripts/migrate-to-multi-tenant-producao.ts --apply  # aplica de verdade
 ```
 Cria os tenants `jnc` (id=1) e `soluteg-direto` (id=2), carimba `tenantId=1` nas 38 tabelas operacionais (só onde `tenantId IS NULL`, idempotente), cria o `platformAdmin` (pede senha interativamente, mín. 12 caracteres).
 
@@ -205,8 +216,8 @@ A partir daqui, todo `INSERT` novo passa a carimbar `tenantId` (guardas fail-clo
 Cobre registros criados na janela entre a Fase 7 (migração de dados) e a Fase 8 (deploy do código com as guardas).
 
 ```bash
-pnpm tsx scripts/backfill-tenant-null.ts --producao           # dry-run
-pnpm tsx scripts/backfill-tenant-null.ts --producao --apply   # aplica os 16 backfills determinísticos
+pnpm tsx scripts/backfill-tenant-null-producao.ts           # dry-run
+pnpm tsx scripts/backfill-tenant-null-producao.ts --apply   # aplica os 16 backfills determinísticos
 ```
 Depois, limpeza manual do que o script reporta como "decisão manual" (`configuracoesTecnico`, laudo residual sem cliente/OS) — mesmo processo do staging, adaptado aos dados reais de produção. Cuidado especial: produção tem MUITO mais volume que staging em `waterTankMonitoring` — o backfill pode demorar mais.
 
@@ -217,12 +228,12 @@ Depois, limpeza manual do que o script reporta como "decisão manual" (`configur
 
 ## 12. Fase 10 — Travamento NOT NULL + FK 🔧
 
-Depende da Fase 1.1 (script corrigido, sem `waterTankSensors`).
+Depende da Fase 1.1 (`scripts/lock-tenant-not-null-fk-producao.ts` criado, sem `waterTankSensors`) e da reverificação 4.5 (LOCK-01) sem achado novo.
 
 ```bash
-pnpm tsx scripts/lock-tenant-not-null-fk.ts --producao
+pnpm tsx scripts/lock-tenant-not-null-fk-producao.ts
 ```
-**Excluídos do NOT NULL** (confirmado pelas decisões já tomadas em staging): `notificationLogs` (NOTIF-01), `waterTankSensors` (LOCK-02), `client_equipment` (não tem a coluna). **Incluídos mesmo com writer morto** (LOCK-01, mesma decisão do staging): `admins`, `auditLog`, `invites`, `inspectionReports` — travar aqui é seguro porque ninguém escreve neles hoje; a pegadinha é só lembrar de carimbar `tenantId` quando esses writers forem reativados (3.7.4/3.7.6/3.7.7).
+**Excluídos do NOT NULL:** `notificationLogs` (NOTIF-01), `waterTankSensors` (LOCK-02 — motivo pelo qual existe a cópia `-producao.ts`, ver achado 1.2), `client_equipment` (não tem a coluna). **Incluídos mesmo com writer morto** (LOCK-01 — decisão confirmada, achado 1.5): `admins`, `auditLog`, `invites`, `inspectionReports`.
 
 **Validação:** o script para no primeiro erro (não deixa a tabela em estado parcial) e valida `IS_NULLABLE`+FK via `information_schema` a cada tabela — conferir o resumo final (`sucesso.length` deve bater com o total de tabelas da lista).
 **Reversão:** por tabela, `ALTER TABLE <t> DROP FOREIGN KEY fk_<t>_tenant` + `MODIFY COLUMN tenantId INT NULL` (foi exatamente assim que o LOCK-02 foi revertido em staging).
@@ -265,8 +276,12 @@ Fazer no horário de baixo uso já reservado na Fase 2. Avisar se decidiu comuni
 
 ---
 
-## Perguntas em aberto para decidirmos juntos antes de eu gerar os primeiros prompts
+## Decisões tomadas (22/08/2026)
 
-1. **Abordagem dos scripts de produção** (achado 1.1): cópia `-producao.ts` dedicada, ou flag `--producao` nos 4 scripts existentes?
-2. **Comunicação aos clientes** sobre a janela de manutenção (Fase 2) — avisa ou não, e com quanto tempo de antecedência?
-3. **Confirma a exclusão do NOT NULL** pra `admins`/`auditLog`/`invites`/`inspectionReports` (LOCK-01) — mesma decisão do staging, ou quer reavaliar algum deles à luz de produção?
+| # | Pergunta | Decisão | Detalhe |
+|---|---|---|---|
+| 1 | Abordagem dos scripts de produção (achado 1.1) | Cópia dedicada `*-producao.ts` | Seção 1.1 |
+| 2 | Comunicação aos clientes (Fase 2) | Sim, avisar | Texto/antecedência a definir — seção 4 |
+| 3 | Exclusão do NOT NULL para `admins`/`auditLog`/`invites`/`inspectionReports` (LOCK-01) | Travar as 4, mesma decisão do staging | Verificado zero escritor vivo hoje; reverificar contra o merge final (item 4.5) — seção 1.5 |
+
+**Próximo passo:** gerar o prompt para o Claude Code (VS Code) executar a Fase 1 (seção 3) — itens 1.1 a 1.3 (scripts de produção) primeiro, depois 1.4/1.5 (merge + build) como uma etapa separada de revisão.
