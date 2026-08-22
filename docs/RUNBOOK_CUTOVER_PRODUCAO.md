@@ -1,6 +1,6 @@
 # Runbook — Cutover de Produção (Fase 3.7 Multi-tenant)
 
-> **Status:** ✅ **Fases 1–7 CONCLUÍDAS (22/08)** — merge oficializado (`54757d3`), backup feito, diagnóstico + 14 ajustes de schema legado, schema multi-tenant central completo, e **migração de dados aplicada** (tenants `jnc`/`soluteg-direto`, platformAdmin, `tenantId=1` em ~160k linhas; validado). **Próximo passo: Fase 8 (deploy do código — o momento mais crítico do cutover).** ⚠️ **`deploy-app` PROIBIDO fora da execução coordenada da Fase 8+9** (ver aviso abaixo).
+> **Status:** ✅ **Fases 1–9 CONCLUÍDAS (22/08) — PRODUÇÃO JÁ RODA MULTI-TENANT.** Código deployado (`c9d926e`), banco migrado e **100% consistente (0 `tenantId` NULL nas 42 tabelas)**, `admins.tenantId` corrigido no caminho, backfill fechado. Login admin/cliente/técnico validado no ar. **A partir de agora `deploy-app` é seguro** (schema + dados + código alinhados). **Faltam só passos de endurecimento:** Fase 10 (NOT NULL + FK), Fase 11 (rotação JWT), Fase 12 (validação final), Fase 13 (docs). O sistema está estável e consistente mesmo se pararmos aqui — as fases restantes podem ser feitas com calma.
 >
 > ## 🚨 NÃO RODAR `deploy-app` ATÉ TERMINAR A FASE 9
 > **A partir de agora, `master` tem o código do isolamento multi-tenant** (resolve `ctx.tenantId` em todo request, routers filtram por `tenantId`). **O banco de produção ainda não tem nenhuma coluna/tabela desse schema** (isso só acontece nas Fases 5-7 abaixo). **Se `deploy-app` rodar antes da Fase 7 (migração de dados) estar completa, a produção inteira provavelmente cai** — toda criação de contexto tRPC (login, qualquer chamada autenticada) tende a falhar tentando ler uma coluna `tenantId` que não existe. Isso quebra o reflexo automático de "commit → push → deploy" — **de propósito, até o cutover estar pronto pra ser executado por completo.**
@@ -580,7 +580,9 @@ SELECT
 
 ---
 
-## 10. Fase 8 — Deploy do código 🔧
+## 10. Fase 8 — Deploy do código 🔧 ✅ CONCLUÍDA (22/08)
+
+> **Resultado (22/08):** `admins.tenantId` criado + populado (3 admins, tenant 1) antes do deploy. `git pull origin master` FF limpo `49099ed`→`c9d926e` (árvore suja não atrapalhou, como previsto). `pnpm install` (lockfile já ok) + `pnpm run build` (exit 0, `dist/index.js` 559.8kb) + `pm2 restart soluteg-sistema --update-env`. **Boot saudável:** servidor rodando, MQTT conectado, WhatsApp ON, job mensal criou OS, alerta de caixa criou OS emergencial — todos os caminhos de escrita fail-closed (que exigem tenant) funcionaram. **Zero erro de `tenantId`/coluna/DB nos logs.** Validação no navegador: login admin/cliente/técnico OK, todos veem seus dados (OS, clientes, docs). Ponto de rollback era `49099ed` (não foi preciso).
 
 > **É o momento mais crítico do cutover** — aqui a produção troca pro código multi-tenant. Fazer na janela de baixo uso (Fase 2). Boot = poucos segundos de downtime no `pm2 restart`. **Emendar a Fase 9 logo em seguida** (o código antigo estava criando órfãos `tenantId=NULL` até este instante).
 
@@ -657,7 +659,9 @@ Assim que o boot estiver validado, **seguir direto pra Fase 9 (backfill)** — d
 
 ---
 
-## 11. Fase 9 — Backfill de órfãos pós-deploy 🔧
+## 11. Fase 9 — Backfill de órfãos pós-deploy 🔧 ✅ CONCLUÍDA (22/08)
+
+> **Resultado (22/08):** dry-run acusou **um único ponto de NULL: `waterTankMonitoring = 94`** (leituras MQTT da janela Fase 7→8); todo o resto já estava em 0, incluindo `notificationLogs` e os casos "decisão manual" (`configuracoesTecnico`, laudo residual) — nenhuma intervenção manual foi necessária. `--apply` carimbou os 94 via `clientId → clients.tenantId` → **DEPOIS = 0**. **Confirmação crítica pra Fase 10:** um 2º dry-run ~1 min depois (após várias leituras novas) mostrou `waterTankMonitoring = 0` de novo → **o código novo carimba `tenantId` na ingestão MQTT** (senão teriam surgido NULLs novos). Banco inteiro: **0 `tenantId` NULL nas 42 tabelas.**
 
 Cobre registros criados na janela entre a Fase 7 (migração de dados) e a Fase 8 (deploy do código com as guardas).
 
