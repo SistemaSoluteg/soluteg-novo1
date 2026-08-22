@@ -582,14 +582,78 @@ SELECT
 
 ## 10. Fase 8 — Deploy do código 🔧
 
+> **É o momento mais crítico do cutover** — aqui a produção troca pro código multi-tenant. Fazer na janela de baixo uso (Fase 2). Boot = poucos segundos de downtime no `pm2 restart`. **Emendar a Fase 9 logo em seguida** (o código antigo estava criando órfãos `tenantId=NULL` até este instante).
+
+### 8.0 — 🚨 PRÉ-REQUISITO CRÍTICO: `admins.tenantId` (achado 22/08)
+
+O `server/_core/context.ts` resolve o `ctx.tenantId` do admin lendo **`admins.tenantId`** (linhas 103-107). **Essa coluna NÃO existe em produção** — ela foi adicionada **manualmente** em staging na sub-fase 3.7.2 (Fundação), nunca entrou numa migration (`0032/0033/0034`), e por isso escapou das Fases 5-7 deste runbook. Sem ela, todo admin **loga mas cai em fail-closed** ("Tenant scope ausente") em qualquer operação — o `try/catch` do context transforma o erro de coluna inexistente em `tenantId=null`. **Tem que ser corrigido ANTES do deploy.** (`clients.tenantId` e `technicians.tenantId`, as outras duas fontes do context, já foram carimbadas na Fase 7 — só `admins` faltou.)
+
+**Confirmar que falta (DBeaver):**
+```sql
+SELECT COUNT(*) AS tem_coluna FROM information_schema.COLUMNS
+WHERE TABLE_SCHEMA='d5ea2e96_solutegdb' AND TABLE_NAME='admins' AND COLUMN_NAME='tenantId';
+-- Esperado: 0 (não existe). Se já for 1, pular o ALTER abaixo.
+SELECT COUNT(*) AS total_admins FROM admins;   -- quantos admins existem (todos JNC = tenant 1)
+```
+**Aplicar (DBeaver) — coluna idêntica ao schema (`int` nullable, após `id`):**
+```sql
+ALTER TABLE `admins` ADD COLUMN `tenantId` int NULL AFTER `id`;
+UPDATE `admins` SET tenantId = 1 WHERE tenantId IS NULL;
+```
+**Validar:**
+```sql
+SELECT tenantId, COUNT(*) AS n FROM admins GROUP BY tenantId;
+-- Esperado: uma linha, tenantId=1, n = total_admins. Zero NULL.
+```
+> A FK + NOT NULL de `admins.tenantId` fica pra Fase 10 (LOCK-01). Aqui só a coluna nullable + backfill.
+
+### 8.1 — Árvore de trabalho de produção (o `git pull` está seguro)
+
+Checado em 22/08: **nenhum** dos arquivos untracked do dir de produção (`deploy.sh`, `test-db.js`, `drizzle/0024_hard_dagger.sql`, `drizzle-kit`, `google-chrome-stable_current_amd64.deb`, `soluteg-novo@1.0.0`) é rastreado no `master` de destino → não há colisão. `deploy-vps.sh` está deletado localmente e também foi removido do repo → "both deleted", sem conflito. O `git pull` (fast-forward de `49099ed` → `54757d3`) **não vai abortar**. Ainda assim, antes de puxar, confirme:
 ```bash
-deploy-app   # ou manualmente: cd /var/www/soluteg/backend && git pull origin master && pnpm install && pnpm run build && pm2 restart soluteg-sistema --update-env
+cd /var/www/soluteg/backend
+git status -sb          # confirmar que os untracked são só o lixo conhecido + gitignored
+git log --oneline -1    # deve mostrar 49099ed (ponto de rollback — anote)
 ```
 
-A partir daqui, todo `INSERT` novo passa a carimbar `tenantId` (guardas fail-closed da 3.7.2) e todo router isolado passa a filtrar por `ctx.tenantId`.
+### 8.2 — Ponto de rollback
+**Commit atual da produção = `49099ed`.** Se algo der errado no deploy, é pra ele que voltamos (§8.5).
 
-**Validação:** `pm2 status soluteg-sistema` online, `pm2 logs` sem erro de boot, um login de admin funciona, uma tela básica (dashboard) carrega.
-**Reversão:** `git checkout <commit-anterior>` + rebuild + restart (o código antigo não sabe nada de `tenantId`, mas o schema novo é compatível — colunas `tenantId` extras não quebram queries antigas que não as usam).
+### 8.3 — Deploy (passo a passo, com checkpoint entre cada um)
+> Rodar manualmente, **não** o alias `deploy-app` — queremos parar e conferir entre os passos.
+```bash
+cd /var/www/soluteg/backend
+git pull origin master          # (1) FF 49099ed → 54757d3; confira "Fast-forward" e zero conflito
+pnpm install                    # (2) sincroniza deps; confira que termina sem erro
+pnpm run build                  # (3) vite build + esbuild → dist/index.js; confira exit 0, sem erro de TS/bundle
+pm2 restart soluteg-sistema --update-env   # (4) sobe o código novo + relê o .env
+```
+Se o passo (1), (2) ou (3) falhar, **pare antes do (4)** — o processo no ar ainda está com o `dist/` antigo, produção intacta. Só o (4) troca o código em execução.
+
+### 8.4 — Validação pós-deploy (fazer TUDO antes de considerar OK)
+```bash
+pm2 status soluteg-sistema                    # online, uptime resetado, 0 restarts em loop
+pm2 logs soluteg-sistema --lines 80 --nostream  # sem erro de boot (esp. nada de "tenantId"/coluna/DB)
+```
+Depois, no navegador (produção real):
+- [ ] **Login de admin** + abrir o **dashboard** e a **lista de clientes** (prova que `ctx.tenantId` resolve e o `forTenant` filtra — se `admins.tenantId` tivesse falhado, aqui daria erro/tela vazia).
+- [ ] **Login de cliente** (portal) — uma tela com dados.
+- [ ] **Login de técnico** (portal) — uma OS.
+- [ ] **Sensor MQTT** mandando leitura e o nível atualizando (ingestão viva não quebrou).
+- [ ] `pm2 logs` limpo depois de alguns minutos de uso real.
+
+### 8.5 — Reversão (se necessário)
+```bash
+cd /var/www/soluteg/backend
+git checkout 49099ed
+pnpm install
+pnpm run build
+pm2 restart soluteg-sistema --update-env
+```
+O código antigo ignora as colunas `tenantId` (schema novo é retrocompatível — colunas extras não quebram queries que não as usam), então o rollback é seguro. **O banco NÃO precisa ser revertido** — o schema/dados multi-tenant convivem com o código antigo.
+
+### 8.6 — Emendar a Fase 9
+Assim que o boot estiver validado, **seguir direto pra Fase 9 (backfill)** — desde a Fase 7 o código antigo vinha inserindo `tenantId=NULL` em `waterTankMonitoring`/`notificationLogs`; a partir do deploy o código novo carimba, e a Fase 9 limpa o acúmulo dessa janela.
 
 ---
 
