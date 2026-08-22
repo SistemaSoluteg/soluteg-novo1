@@ -164,15 +164,14 @@ Rodar também as 3 pré-validações do legado (duplicatas em `budgetNumber`/`ap
 
 ---
 
-## 7. Fase 5 — Os 14 ajustes de schema legado 🔧
+## 7. Fase 5 — Os 14 ajustes de schema legado 🔧 ✅ CONCLUÍDA (22/08)
 
-Só os itens que a Fase 4 confirmou como pendentes. SQL completo (4 blocos) em [`PENDENCIAS_DEPLOY_PRODUCAO.md`](../PENDENCIAS_DEPLOY_PRODUCAO.md) seção "As 14 mudanças a aplicar em produção". Resumo:
-- Bloco 1 (4 UNIQUE): `budgets.budgetNumber`, `budgets.approvalToken`, `technicians.username`, `waterTankSensors.deviceId`
-- Bloco 2 (2 tipos): `budgets.sharedWithPortal` → INT NOT NULL DEFAULT 0; `workOrders.technicianSignature` → TEXT
-- Bloco 3 (6 NOT NULL): `cashTransactions.type/amount`, `saleItems.productName/unitPrice/subtotal`, `sales.total`
-- Bloco 4 (2 sem DEFAULT): `waterTankAlertLog.direction/tankType`
+- Bloco 1 (4 UNIQUE): `budgets.budgetNumber`, `budgets.approvalToken`, `technicians.username`, `waterTankSensors.deviceId` — ✅ os 4 índices criados (avisos de "duplicate index" no MySQL, inofensivos — só significa que já havia um índice não-único nas mesmas colunas antes; não bloqueia nem tem risco).
+- Bloco 2 (2 tipos): `budgets.sharedWithPortal` → INT NOT NULL DEFAULT 0 ✅; `workOrders.technicianSignature` → TEXT, permanece nullable (correto, nem toda OS tem assinatura) ✅
+- Bloco 3 (6 NOT NULL): `cashTransactions.type/amount`, `saleItems.productName/unitPrice/subtotal`, `sales.total` — ✅ todos `NOT NULL`
+- Bloco 4 (2 sem DEFAULT): `waterTankAlertLog.direction/tankType` — ✅ todos `NOT NULL`
 
-**Validação:** query de validação pós-aplicação no mesmo documento (índices criados, tipos/NOT NULL corretos).
+**Validação:** ✅ passou — os 4 índices confirmados via `information_schema.STATISTICS`, os 10 campos dos blocos 2-4 com `IS_NULLABLE` exatamente como esperado (9× `NO`, `technicianSignature` `YES` de propósito).
 **Reversão:** restaurar do backup da Fase 3 (são ALTERs simples, reversão manual também é viável se for só 1-2 tabelas).
 
 ---
