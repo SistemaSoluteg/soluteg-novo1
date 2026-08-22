@@ -1,6 +1,6 @@
 # Runbook — Cutover de Produção (Fase 3.7 Multi-tenant)
 
-> **Status:** ✅ Fase 1 CONCLUÍDA (22/08) — `master` e `multi-tenant` sincronizados em `54757d3` (fast-forward limpo, sem conflito). **Fases 2-11 (produção) ainda não começaram.**
+> **Status:** ✅ **Fases 1–6 CONCLUÍDAS (22/08)** — merge oficializado (`54757d3`), backup feito, diagnóstico + 14 ajustes de schema legado aplicados, e **schema multi-tenant central completo em produção** (6a auditoria + 6b centrais + 6c `tenantId` nullable; validação final: 3 tabelas de auditoria + 41 colunas `tenantId`). **Próximo passo: Fase 7 (migração de dados).** ⚠️ **`deploy-app` continua PROIBIDO até a Fase 9** (ver aviso abaixo).
 >
 > ## 🚨 NÃO RODAR `deploy-app` ATÉ TERMINAR A FASE 9
 > **A partir de agora, `master` tem o código do isolamento multi-tenant** (resolve `ctx.tenantId` em todo request, routers filtram por `tenantId`). **O banco de produção ainda não tem nenhuma coluna/tabela desse schema** (isso só acontece nas Fases 5-7 abaixo). **Se `deploy-app` rodar antes da Fase 7 (migração de dados) estar completa, a produção inteira provavelmente cai** — toda criação de contexto tRPC (login, qualquer chamada autenticada) tende a falhar tentando ler uma coluna `tenantId` que não existe. Isso quebra o reflexo automático de "commit → push → deploy" — **de propósito, até o cutover estar pronto pra ser executado por completo.**
@@ -176,7 +176,14 @@ Rodar também as 3 pré-validações do legado (duplicatas em `budgetNumber`/`ap
 
 ---
 
-## 8. Fase 6 — Schema multi-tenant central 🔧
+## 8. Fase 6 — Schema multi-tenant central 🔧 ✅ CONCLUÍDA (22/08)
+
+> **Resultado (22/08):** as 3 sub-fases aplicadas e validadas em produção. Validação final: 3 tabelas de auditoria + **41 colunas `tenantId`** (38 operacionais + `gestors` + `condominiums` + `auditLog`), 5 tabelas centrais `utf8mb4_bin`, 4 FKs, 20 índices nas centrais. **Percalços registrados abaixo (lições pro futuro), todos resolvidos.**
+>
+> ### Incidentes durante a execução (todos corrigidos)
+> 1. **DBeaver quebrou a `CREATE TABLE tenants` no `#`.** O default `primaryColor ... DEFAULT '#D4A84B'` tem um `#`, que é caractere de comentário no MySQL. O splitter de statements do DBeaver (rodando o script inteiro) tratou `#D4A84B',` como comentário e cortou a `CREATE TABLE` no meio → `tenants` não foi criada, e em cascata as 2 FKs que apontam pra ela (`condominiums→tenants`, `gestors→tenants`) e o índice `tenants_active_idx` também falharam. **Correção:** rodar a `CREATE TABLE tenants` **isolada** (Ctrl+Enter — execução de statement único não passa pelo splitter), depois as 2 FKs + o índice manualmente. **Lição:** qualquer statement com `#` (ou outro caractere que o cliente trate como comentário) dentro de string deve ser rodado isolado, nunca no meio de um script grande.
+> 2. **DBeaver estava no modo "Record"** (mostra 1 linha por vez, transposta como "Row #1"), o que escondeu resultados de várias linhas e dificultou o diagnóstico. **Lição:** validar sempre no modo **Grid**, ou usar `GROUP_CONCAT`/`COUNT(*)` pra colapsar o resultado numa célula/valor único.
+> 3. **A Fase 6a tinha ficado pra trás.** A execução pulou direto pro 6b/6c; as 3 tabelas de auditoria não existiam ainda (a 6a estava preparada no runbook, mas não fora rodada — não há commit "fecha Fase 6a"). Como as tabelas de auditoria são independentes das centrais e das colunas operacionais, rodar fora de ordem não quebrou nada; a 6a foi aplicada por último e fechou o total em 41. **Lição:** conferir a ordem 6a→6b→6c pelo estado real do banco (query de existência), não pelo que "deveria" ter rodado.
 
 > **Achado 22/08 (durante a preparação desta fase):** o arquivo `drizzle/0032_illegal_shinobi_shaw.sql` (que criou as 8 tabelas do achado 1.3) **também tem `ALTER TABLE` em colunas de `laudos`/`laudoFotos`/`waterTankAlertLog`/`waterTankSensors`** que já existem em produção. **Confirmado via diagnóstico** (22/08): as 10 colunas (`laudos.tipo_id`; `laudoFotos.url_anotada/url_recorte/modo_layout/anotacoes_json`; `waterTankAlertLog.delivered/deliveryError/osId`; `waterTankSensors.alarm3BoiaEnabled/technicianId`) **já existem** em produção. **Por isso o SQL abaixo (6a) NÃO é o arquivo `0032` inteiro** — é só os 3 `CREATE TABLE` + os 11 índices relacionados às tabelas de auditoria, extraídos manualmente. **Não rodar o arquivo `0032` original diretamente.**
 
