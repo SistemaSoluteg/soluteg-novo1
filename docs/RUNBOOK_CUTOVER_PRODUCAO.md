@@ -118,9 +118,17 @@ chmod 600 /var/backups/soluteg-producao/backup-pre-cutover-*.sql
 
 ---
 
-## 6. Fase 4 — Diagnóstico do estado atual de produção 🔧 (read-only)
+## 6. Fase 4 — Diagnóstico do estado atual de produção 🔧 (read-only) ✅ CONCLUÍDA (22/08)
 
-Objetivo: **nunca assumir** que uma tabela/coluna não existe — confirmar. Isso substitui a Fase 0 do `PLANO_3.7.1f.md` (que foi escrita pensando em staging, onde o histórico já era conhecido) por uma versão que desconfia de tudo, já que produção não passou pelas sub-fases incrementais.
+**Resultado:**
+- **4.1:** `laudoCitacoes`/`laudoTipos`/`normaTrechos`/`notificationLogs`/`pushSubscriptions` já existem (confirma a hipótese); `auditLog`/`loginAttempts`/`migrationAuditLog` **não existem** — só essas 3 entram na Fase 6.
+- **4.2:** 0 linhas — nenhuma tabela central multi-tenant existe ainda.
+- **4.3:** 0 linhas — nenhuma tabela tem `tenantId` ainda.
+- **4.4:** `client_equipment` existe, colunas `clientId/createdAt/description/id/type` — sem `tenantId`, confirmado.
+- **Pré-validações do legado (1-3):** zero duplicata em `budgetNumber`/`approvalToken`/`username`/`deviceId`; zero NULL nas 6 colunas que viram NOT NULL; 65 assinaturas, maior com 38.299 bytes (limite é 65.535) — **nada bloqueando a Fase 5**.
+- **4.5 (reverificação LOCK-01):** já coberta pela checagem pós-merge da Fase 1.4 (feita contra o mesmo código que está em produção agora — `master`/`multi-tenant` não mudaram desde então, só docs) — zero chamadores, sem necessidade de repetir.
+
+Objetivo original: **nunca assumir** que uma tabela/coluna não existe — confirmar. Isso substitui a Fase 0 do `PLANO_3.7.1f.md` (que foi escrita pensando em staging, onde o histórico já era conhecido) por uma versão que desconfia de tudo, já que produção não passou pelas sub-fases incrementais.
 
 ```sql
 -- 4.1 — Quais das 8 tabelas do 0032 já existem?
