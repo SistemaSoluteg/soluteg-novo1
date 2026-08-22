@@ -323,6 +323,8 @@ export async function deleteLaudo(id: number) {
 
   await db.delete(laudoMedicoes).where(eq(laudoMedicoes.laudoId, id));
   await db.delete(laudoTecnicos).where(eq(laudoTecnicos.laudoId, id));
+  // LAUDO-01: cascade esquecia as citações de norma vinculadas ao laudo.
+  await db.delete(laudoCitacoes).where(eq(laudoCitacoes.laudoId, id));
   await db.delete(laudos).where(eq(laudos.id, id));
 }
 
