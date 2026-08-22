@@ -178,8 +178,88 @@ Rodar também as 3 pré-validações do legado (duplicatas em `budgetNumber`/`ap
 
 ## 8. Fase 6 — Schema multi-tenant central 🔧
 
-**6a — Tabelas de auditoria (3.7.1a), só as que a Fase 4.1 confirmou ausentes:**
-Aplicar manualmente (statement por statement, não o arquivo `0032` inteiro) os `CREATE TABLE` de `auditLog`, `loginAttempts`, `migrationAuditLog` — extrair do `drizzle/0032_illegal_shinobi_shaw.sql` só esses 3 blocos.
+> **Achado 22/08 (durante a preparação desta fase):** o arquivo `drizzle/0032_illegal_shinobi_shaw.sql` (que criou as 8 tabelas do achado 1.3) **também tem `ALTER TABLE` em colunas de `laudos`/`laudoFotos`/`waterTankAlertLog`/`waterTankSensors`** que já existem em produção. **Confirmado via diagnóstico** (22/08): as 10 colunas (`laudos.tipo_id`; `laudoFotos.url_anotada/url_recorte/modo_layout/anotacoes_json`; `waterTankAlertLog.delivered/deliveryError/osId`; `waterTankSensors.alarm3BoiaEnabled/technicianId`) **já existem** em produção. **Por isso o SQL abaixo (6a) NÃO é o arquivo `0032` inteiro** — é só os 3 `CREATE TABLE` + os 11 índices relacionados às tabelas de auditoria, extraídos manualmente. **Não rodar o arquivo `0032` original diretamente.**
+
+**6a — Tabelas de auditoria (3.7.1a) — SQL pronto pra copiar:**
+
+```sql
+-- 3 CREATE TABLE (extraídos de drizzle/0032_illegal_shinobi_shaw.sql, só o que falta)
+CREATE TABLE `auditLog` (
+	`id` bigint AUTO_INCREMENT NOT NULL,
+	`actorType` varchar(30) NOT NULL,
+	`actorId` int,
+	`actorName` varchar(200),
+	`action` varchar(100) NOT NULL,
+	`resourceType` varchar(50),
+	`resourceId` varchar(100),
+	`tenantId` int,
+	`ipAddress` varchar(45),
+	`userAgent` text,
+	`details` text,
+	`success` tinyint NOT NULL DEFAULT 1,
+	`errorMessage` text,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	CONSTRAINT `auditLog_id` PRIMARY KEY(`id`)
+);
+
+CREATE TABLE `loginAttempts` (
+	`id` bigint AUTO_INCREMENT NOT NULL,
+	`userType` varchar(30) NOT NULL,
+	`identifier` varchar(200) NOT NULL,
+	`ipAddress` varchar(45) NOT NULL,
+	`userAgent` text,
+	`success` tinyint NOT NULL,
+	`failureReason` varchar(100),
+	`attemptedAt` timestamp NOT NULL DEFAULT (now()),
+	CONSTRAINT `loginAttempts_id` PRIMARY KEY(`id`)
+);
+
+CREATE TABLE `migrationAuditLog` (
+	`id` bigint AUTO_INCREMENT NOT NULL,
+	`migrationName` varchar(200) NOT NULL,
+	`step` varchar(100) NOT NULL,
+	`sourceType` varchar(50),
+	`sourceId` varchar(100),
+	`targetType` varchar(50),
+	`targetId` varchar(100),
+	`status` varchar(20) NOT NULL,
+	`details` text,
+	`errorMessage` text,
+	`executedBy` varchar(100),
+	`executedAt` timestamp NOT NULL DEFAULT (now()),
+	CONSTRAINT `migrationAuditLog_id` PRIMARY KEY(`id`)
+);
+
+-- 11 índices relacionados (também extraídos do 0032)
+CREATE INDEX `audit_actor_idx` ON `auditLog` (`actorType`,`actorId`);
+CREATE INDEX `audit_action_idx` ON `auditLog` (`action`);
+CREATE INDEX `audit_resource_idx` ON `auditLog` (`resourceType`,`resourceId`);
+CREATE INDEX `audit_tenant_idx` ON `auditLog` (`tenantId`);
+CREATE INDEX `audit_created_idx` ON `auditLog` (`createdAt`);
+CREATE INDEX `login_identifier_idx` ON `loginAttempts` (`identifier`);
+CREATE INDEX `login_ip_idx` ON `loginAttempts` (`ipAddress`);
+CREATE INDEX `login_attempted_idx` ON `loginAttempts` (`attemptedAt`);
+CREATE INDEX `migaudit_migration_idx` ON `migrationAuditLog` (`migrationName`);
+CREATE INDEX `migaudit_source_idx` ON `migrationAuditLog` (`sourceType`,`sourceId`);
+CREATE INDEX `migaudit_target_idx` ON `migrationAuditLog` (`targetType`,`targetId`);
+
+-- Fix de collation (drizzle/migrations/0043_collation_fix_audit_tables.sql — número corrigido, achado 1.4)
+ALTER TABLE `auditLog` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
+ALTER TABLE `loginAttempts` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
+ALTER TABLE `migrationAuditLog` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
+```
+
+**Validação do 6a:**
+```sql
+SELECT TABLE_NAME, TABLE_COLLATION FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = 'd5ea2e96_solutegdb' AND TABLE_NAME IN ('auditLog','loginAttempts','migrationAuditLog');
+-- Esperado: 3 linhas, TABLE_COLLATION = utf8mb4_bin em todas
+
+SELECT TABLE_NAME, COUNT(*) AS num_indices FROM information_schema.STATISTICS
+WHERE TABLE_SCHEMA = 'd5ea2e96_solutegdb' AND TABLE_NAME IN ('auditLog','loginAttempts','migrationAuditLog')
+GROUP BY TABLE_NAME;
+-- Esperado: auditLog ~6 (PK + 5 índices), loginAttempts ~4 (PK + 3), migrationAuditLog ~4 (PK + 3)
+```
 
 **6b — Tabelas centrais multi-tenant (3.7.1b):**
 `drizzle/0033_giant_tomorrow_man.sql` (via `sed`, não `grep -v` — regra do `CLAUDE.md` §5.5) + os 4 `ALTER...FOREIGN KEY` + 13 `CREATE INDEX` manuais (o pipe não aplica FK/índice pós-`CREATE TABLE`) + o fix de collation (`drizzle/migrations/0043_collation_fix_audit_tables.sql` — **note o número corrigido**, achado 1.4). Passo a passo completo em [`PENDENCIAS_DEPLOY_PRODUCAO.md`](../PENDENCIAS_DEPLOY_PRODUCAO.md) seção "3.7.1b".
