@@ -1,6 +1,6 @@
 # Runbook — Cutover de Produção (Fase 3.7 Multi-tenant)
 
-> **Status:** ✅ **Fases 1–6 CONCLUÍDAS (22/08)** — merge oficializado (`54757d3`), backup feito, diagnóstico + 14 ajustes de schema legado aplicados, e **schema multi-tenant central completo em produção** (6a auditoria + 6b centrais + 6c `tenantId` nullable; validação final: 3 tabelas de auditoria + 41 colunas `tenantId`). **Próximo passo: Fase 7 (migração de dados).** ⚠️ **`deploy-app` continua PROIBIDO até a Fase 9** (ver aviso abaixo).
+> **Status:** ✅ **Fases 1–7 CONCLUÍDAS (22/08)** — merge oficializado (`54757d3`), backup feito, diagnóstico + 14 ajustes de schema legado, schema multi-tenant central completo, e **migração de dados aplicada** (tenants `jnc`/`soluteg-direto`, platformAdmin, `tenantId=1` em ~160k linhas; validado). **Próximo passo: Fase 8 (deploy do código — o momento mais crítico do cutover).** ⚠️ **`deploy-app` PROIBIDO fora da execução coordenada da Fase 8+9** (ver aviso abaixo).
 >
 > ## 🚨 NÃO RODAR `deploy-app` ATÉ TERMINAR A FASE 9
 > **A partir de agora, `master` tem o código do isolamento multi-tenant** (resolve `ctx.tenantId` em todo request, routers filtram por `tenantId`). **O banco de produção ainda não tem nenhuma coluna/tabela desse schema** (isso só acontece nas Fases 5-7 abaixo). **Se `deploy-app` rodar antes da Fase 7 (migração de dados) estar completa, a produção inteira provavelmente cai** — toda criação de contexto tRPC (login, qualquer chamada autenticada) tende a falhar tentando ler uma coluna `tenantId` que não existe. Isso quebra o reflexo automático de "commit → push → deploy" — **de propósito, até o cutover estar pronto pra ser executado por completo.**
@@ -507,7 +507,11 @@ SELECT
 
 ---
 
-## 9. Fase 7 — Migração de dados 🔧
+## 9. Fase 7 — Migração de dados 🔧 ✅ CONCLUÍDA (22/08)
+
+> **Resultado (22/08):** aplicada via `pnpm tsx /var/www/soluteg-staging/scripts/migrate-to-multi-tenant-producao.ts --apply`, rodando **a partir do dir de produção** (`cwd=/var/www/soluteg/backend`) pra usar o `.env` de produção sem tocar no checkout de produção (que estava com a árvore de trabalho suja — untracked colidindo, `git pull` abortaria). Tempo: **91.7s** (o `UPDATE` dos ~155k do `waterTankMonitoring`). Criados: tenant `jnc` (id=1), `soluteg-direto` (id=2), platformAdmin Thiago (id=1). `tenantId=1` carimbado em ~160k linhas. **Validação:** Etapa 5 do script (zero NULL residual + integridade referencial) + conferência independente no DBeaver (tenants, platformAdmin, 0 NULL nas tabelas estáveis, 44 clients tenant=1). `waterTankMonitoring` tinha 11 NULL novos (leituras MQTT ao vivo pós-migração) — **esperado, alvo da Fase 9**.
+>
+> **Dívida técnica anotada:** a Etapa 3 exibe "0 linhas" por tabela no modo `--apply` (lê `affectedRows` de forma que retorna 0); é **só cosmético** — os `UPDATE` rodam (comprovado pelos 91.7s + Etapa 5 com zero NULL). Mesmo comportamento em staging (o "109.230 linhas" de lá veio do dry-run). O `migrationAuditLog` grava `linhasAfetadas:0` pelo mesmo motivo. Não afeta dados; corrigir quando/se mexer nesse script de novo.
 
 **Pré-condição:** Fase 6 concluída (✅). Script `scripts/migrate-to-multi-tenant-producao.ts` já criado (Fase 1.2) e **revisado em 22/08** — diff contra o original de staging confirma que só mudam os comentários + a troca `assertStagingEnvironment()` → `assertProductionEnvironment()`; a lógica é idêntica à versão que rodou e validou em staging (carimbou 109.230 linhas). Aprovado pra uso.
 
