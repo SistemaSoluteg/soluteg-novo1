@@ -1,10 +1,10 @@
 # CLAUDE.md — Contexto Operacional do Projeto Soluteg
 
-> Este arquivo é lido automaticamente por IAs de codificação (Antigravity, Claude Code) ao abrir o projeto.
+> Este arquivo é lido automaticamente por IAs de codificação (Claude "arquiteta" + Claude Code no VS Code) ao abrir o projeto.
 > Contém o **contexto operacional vivo** — o que está sendo feito agora, regras invioláveis, comandos comuns.
 > Para visão arquitetural completa, ver [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDOFF.md).
 
-**Última atualização:** 21/08/2026 (3.7.2 + 3.7.1f concluídas e validadas em staging; próximo passo é o cutover de produção)
+**Última atualização:** 22/08/2026 (novo fluxo de trabalho: Claude "arquiteta" planeja/documenta, Claude Code no VS Code executa, Antigravity descontinuada — §5.2. Estado técnico inalterado: 3.7.2 + 3.7.1f concluídas e validadas em staging; próximo passo é o cutover de produção)
 
 ---
 
@@ -148,16 +148,19 @@ Helper `server/lib/environment.ts` aborta scripts se rodarem no banco errado. **
 ### 5.1 Branches
 
 - `master` — produção. Só recebe merges de bugfix e sub-fases concluídas.
-- `multi-tenant` — refactor em andamento. Antigravity trabalha aqui.
+- `multi-tenant` — refactor em andamento. Planejado pela Claude arquiteta, implementado pelo Claude Code no VS Code.
 - `fix/*` — bugfixes urgentes. **SEMPRE** baseados em `master`, nunca em `multi-tenant`.
 
 **Antes de qualquer mudança:** `git branch --show-current` e confirmar.
 
-### 5.2 Ferramentas de IA
+### 5.2 Ferramentas de IA (atualizado 22/08/2026)
 
-- **Antigravity** → multi-tenant (branch `multi-tenant`)
-- **VS Code Claude Code** → bugfixes (branch `fix/*` de master)
-- **NUNCA misturar contextos.** Cada ferramenta tem seu escopo.
+**A Antigravity não é mais usada neste projeto** — descontinuada em 22/08/2026. Fluxo atual, duas camadas:
+
+- **Claude "arquiteta"** (sessão à parte, foco em segurança e UI/UX) → planeja, discute cada passo com o Thiago **antes** de definir o caminho, lê/atualiza a documentação viva (este arquivo, `ROADMAP.md`, `ARCHITECTURE_HANDOFF.md`, `docs/PENDENCIAS_TECNICAS.md`, `PENDENCIAS_DEPLOY_PRODUCAO.md`) diretamente. **Não edita código-fonte** — traduz cada passo acordado num prompt para o Claude Code.
+- **Claude Code (VS Code)** → executa as mudanças de código a partir dos prompts da arquiteta, em ambas as branches (`multi-tenant` e `fix/*`). Revisão do diff com o Thiago → commit + push → deploy.
+- **VPS e banco de dados** são acesso **exclusivo do Thiago** (SSH + DBeaver). Nem a arquiteta nem o Claude Code têm essas credenciais — migrações de schema/dados são sempre entregues como SQL/checklist para o Thiago rodar manualmente no DBeaver, com o resultado trazido de volta para validação.
+- **Continuidade entre computadores:** como o Thiago trabalha em mais de uma máquina (e pode trocar de "arquiteta" de sessão), toda decisão relevante precisa ir para a documentação viva **imediatamente**, não só na memória local da IA — é o que permite retomar o trabalho de onde parou em qualquer computador.
 
 ### 5.3 Segurança em tRPC
 

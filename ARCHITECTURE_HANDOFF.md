@@ -1,7 +1,7 @@
 # Soluteg — Documento Técnico de Arquitetura e Handoff
 
-> **Versão:** 1.4
-> **Data:** 21 de agosto de 2026
+> **Versão:** 1.5
+> **Data:** 22 de agosto de 2026
 > **Autor:** Thiago (com assessoria de Claude AI)
 > **Audiência:** Arquiteto de software, desenvolvedores seniores, contributors técnicos
 > **Status do projeto:** Em produção (JNC) | Refactor multi-tenant em andamento
@@ -1097,10 +1097,10 @@ chmod 600 /var/backups/<dir>/backup-pre-*.sql
 
 ### 11.5 Ferramentas
 
-- **VS Code** (PC) — desenvolvimento principal, usado com extensão Claude Code para bugfixes em master
-- **Antigravity** (PC) — usado especificamente para o refactor multi-tenant na branch correspondente
-- **SSH/Terminal** (VPS) — deploy, migrations, ops
-- **DBeaver** — inspeção e queries adhoc no banco
+- **VS Code + Claude Code** — execução de código em ambas as branches (`master`/`fix/*` e `multi-tenant`), a partir de prompts definidos com a Claude "arquiteta"
+- **Claude "arquiteta"** (sessão à parte, foco segurança/UI-UX) — planejamento, discussão de decisões com o Thiago, manutenção da documentação viva. Não edita código. Substituiu a Antigravity (descontinuada em 22/08/2026) nesse papel
+- **SSH/Terminal** (VPS) — deploy, migrations, ops — acesso exclusivo do Thiago
+- **DBeaver** — inspeção e queries adhoc no banco — acesso exclusivo do Thiago
 
 **Regra:** uma ferramenta de IA por contexto, não misturar.
 
@@ -1304,7 +1304,7 @@ SMTP_PASS=...
 
 ## Encerramento
 
-Este documento reflete o estado em **21 de agosto de 2026**. À medida que o multi-tenant avança e novas decisões são tomadas, este documento **deve ser atualizado** — preferencialmente na mesma branch onde a mudança acontece.
+Este documento reflete o estado em **22 de agosto de 2026**. À medida que o multi-tenant avança e novas decisões são tomadas, este documento **deve ser atualizado** — preferencialmente na mesma branch onde a mudança acontece.
 
 Para qualquer dúvida ou sugestão, ver o `ROADMAP.md` para contexto de prioridades, ou abrir issue no GitHub.
 
