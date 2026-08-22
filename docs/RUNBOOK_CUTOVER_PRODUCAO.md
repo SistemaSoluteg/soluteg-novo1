@@ -104,7 +104,7 @@ Cada fase abaixo: **o que faz**, **quem faz**, **pré-condição**, **validaçã
 
 ---
 
-## 5. Fase 3 — Backup 🔧
+## 5. Fase 3 — Backup 🔧 ✅ CONCLUÍDA (22/08)
 
 ```bash
 mysqldump -h 69.6.213.57 -u d5ea2e96_soluteg -p \
@@ -112,8 +112,9 @@ mysqldump -h 69.6.213.57 -u d5ea2e96_soluteg -p \
   d5ea2e96_solutegdb > /var/backups/soluteg-producao/backup-pre-cutover-$(date +%Y%m%d-%H%M%S).sql
 chmod 600 /var/backups/soluteg-producao/backup-pre-cutover-*.sql
 ```
-**Validação:** arquivo existe, tamanho condizente (comparar com backups anteriores), `chmod 600` aplicado.
-**Reversão:** este backup é o ponto de restauração de tudo o que vem depois — se algo der muito errado em qualquer fase futura, é `mysql < backup-pre-cutover-*.sql`.
+**Arquivo:** `/var/backups/soluteg-producao/backup-pre-cutover-20260822-144218.sql` — **22M**, permissão `600`, `-- Dump completed on 2026-08-22 14:42:45` confirmado (não truncado), 45 `CREATE TABLE`.
+**Validação:** ✅ passou — arquivo íntegro, chmod aplicado, lixo de 0 bytes das tentativas com senha errada removido.
+**Reversão:** este backup é o ponto de restauração de tudo o que vem depois — se algo der muito errado em qualquer fase futura, é `mysql < backup-pre-cutover-20260822-144218.sql`.
 
 ---
 
