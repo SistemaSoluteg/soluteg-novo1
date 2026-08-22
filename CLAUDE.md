@@ -24,6 +24,9 @@
 
 ## 2. Estado atual (16/08/2026)
 
+> ## 🚨 22/08/2026 — `master` NÃO PODE SER DEPLOYADO EM PRODUÇÃO AGORA
+> O merge do cutover (Fase 1 do [`docs/RUNBOOK_CUTOVER_PRODUCAO.md`](./docs/RUNBOOK_CUTOVER_PRODUCAO.md)) já foi oficializado: `master` e `multi-tenant` estão sincronizados em `54757d3`, ou seja, **`master` já contém todo o código do isolamento multi-tenant** (resolve `ctx.tenantId`, routers filtram por tenant). **O banco de produção continua exatamente como estava — zero schema multi-tenant.** Rodar `deploy-app` agora provavelmente **derruba a produção inteira** (toda criação de contexto tRPC tende a falhar buscando uma coluna `tenantId` inexistente). **NÃO rodar `deploy-app`** até completar as Fases 3-9 do runbook (backup → schema → migração de dados). Isso vale até o runbook ser marcado como concluído nesta seção.
+
 ### Em andamento
 **Fase 3.7 — Refactor multi-tenant.** Branch `multi-tenant`. **Sub-fase 3.7.2 (Isolamento de queries) CONCLUÍDA — 9 routers isolados (`technicians`, `clients`, `workOrders`, `budgets`, `checklists`, `technicianPortal`, `documents`, `waterTankAdmin`, `laudos`).** Todo router que toca dado operacional está isolado por tenant. Fechados no caminho: gap `clientProfile.uploadPhoto`, `SEC-01` (`/api/admin-metrics` → `adminMetrics.router` autenticado), SSE `/api/water-tank-sse` (auth + clientId do JWT), gate `pdvProcedure` (PDV só tenant 1), carimbo de `tenantId` no `pushSubscriptions`, e faxina dos routers legados `reports`/`users` (removidos). **Sub-fase 3.7.1f (travamento final) CONCLUÍDA EM STAGING (16/08, ajustada em 20/08):** backfill (0 NULL) → `tenantId NOT NULL` + FK `→ tenants.id` em 40 tabelas (`notificationLogs` e `waterTankSensors` de fora — NOTIF-01/LOCK-02) → rotação do `JWT_SECRET` validada (sessão antiga caiu, login novo entrou). **20/08: `waterTankSensors` revertida pra nullable** (LOCK-02 — quebrava 100% da ingestão MQTT, inclusive sensor já atribuído; ver detalhes na seção "Próxima"). **Próximo passo: o cutover de produção** — produção ainda não recebeu NENHUMA migração multi-tenant (tudo ⏳ no `PENDENCIAS_DEPLOY_PRODUCAO.md`); é um evento único (merge → backup → migrações de schema → migração de dados → deploy → backfill → 3.7.1f ALTERs → rotação JWT).
 
@@ -213,6 +216,8 @@ pm2 restart soluteg-staging --update-env
 ```
 
 ### Deploy produção
+
+> 🚨 **NÃO RODAR ISSO AGORA** (22/08/2026) — `master` já tem o código multi-tenant, mas o banco de produção não. Ver aviso na seção 2. Só rodar depois de completar as Fases 3-9 do [`docs/RUNBOOK_CUTOVER_PRODUCAO.md`](./docs/RUNBOOK_CUTOVER_PRODUCAO.md).
 
 ```bash
 cd /var/www/soluteg/backend
