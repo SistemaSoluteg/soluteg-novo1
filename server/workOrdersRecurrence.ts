@@ -1,6 +1,6 @@
 import { eq, and, sql } from "drizzle-orm";
 import { getDb } from "./db";
-import { workOrders, workOrderHistory } from "../drizzle/schema";
+import { workOrders } from "../drizzle/schema";
 import * as workOrdersDb from "./workOrdersDb";
 
 /**
@@ -99,8 +99,8 @@ export async function processRecurringWorkOrders() {
         parentOsId: wo.id, // Referência à OS pai
       });
 
-      // Registrar no histórico
-      await db.insert(workOrderHistory).values({
+      // Registrar no histórico (addWorkOrderHistory deriva o tenantId da OS-pai, fail-closed)
+      await workOrdersDb.addWorkOrderHistory({
         workOrderId: newWorkOrder.id,
         previousStatus: null,
         newStatus: "aberta",

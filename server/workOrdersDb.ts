@@ -263,7 +263,24 @@ export async function addWorkOrderHistory(data: Omit<InsertWorkOrderHistory, "cr
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  await db.insert(workOrderHistory).values(data);
+  // tenantId carimbado a partir da OS-pai (fail-closed). Cobre todos os callers
+  // (updateWorkOrderStatus, technicianPortal, jobs) sem exigir que cada um passe
+  // tenantId. Necessário desde a 3.7.1f/Fase 10, que travou workOrderHistory.tenantId
+  // como NOT NULL — sem isto, todo INSERT de histórico falha.
+  let tenantId = (data as { tenantId?: number | null }).tenantId ?? null;
+  if (tenantId == null) {
+    const [os] = await db
+      .select({ tenantId: workOrders.tenantId })
+      .from(workOrders)
+      .where(eq(workOrders.id, data.workOrderId))
+      .limit(1);
+    tenantId = os?.tenantId ?? null;
+  }
+  if (tenantId == null) {
+    throw new Error(`addWorkOrderHistory: tenantId não resolvido (workOrderId=${data.workOrderId})`);
+  }
+
+  await db.insert(workOrderHistory).values({ ...data, tenantId });
   return true;
 }
 
