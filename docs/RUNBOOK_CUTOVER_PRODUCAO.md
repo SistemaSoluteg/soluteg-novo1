@@ -261,17 +261,242 @@ GROUP BY TABLE_NAME;
 -- Esperado: auditLog ~6 (PK + 5 índices), loginAttempts ~4 (PK + 3), migrationAuditLog ~4 (PK + 3)
 ```
 
-**6b — Tabelas centrais multi-tenant (3.7.1b):**
-`drizzle/0033_giant_tomorrow_man.sql` (via `sed`, não `grep -v` — regra do `CLAUDE.md` §5.5) + os 4 `ALTER...FOREIGN KEY` + 13 `CREATE INDEX` manuais (o pipe não aplica FK/índice pós-`CREATE TABLE`) + o fix de collation (`drizzle/migrations/0043_collation_fix_audit_tables.sql` — **note o número corrigido**, achado 1.4). Passo a passo completo em [`PENDENCIAS_DEPLOY_PRODUCAO.md`](../PENDENCIAS_DEPLOY_PRODUCAO.md) seção "3.7.1b".
+> **Como rodar (6b e 6c):** SQL cru, pra colar no **DBeaver** (multi-statement confiável). **Não** usar `sed | mysql` — o `CLAUDE.md §5.5` avisa que FK e índices pós-`CREATE TABLE` somem silenciosamente no pipe do CLI; colar direto no DBeaver elimina esse risco. As 5 `CREATE TABLE` do `0033` **já nascem `COLLATE=utf8mb4_bin`** na própria definição, então **a 6b NÃO precisa de `CONVERT TO CHARACTER SET`** — o `0043` (fix de collation) era só das 3 tabelas de auditoria e já foi aplicado na Fase 6a.
 
-**6c — `tenantId` nullable nas 38 tabelas operacionais (3.7.1c):**
-```bash
-sed 's|--> statement-breakpoint||g' drizzle/0034_wonderful_vulcan.sql | \
-  mysql -h 69.6.213.57 -u d5ea2e96_soluteg -p d5ea2e96_solutegdb
+---
+
+### 6b — Tabelas centrais multi-tenant (3.7.1b)
+
+**Pré-validação (esperado: 0 linhas — nenhuma das 5 existe ainda; confirma o diagnóstico 4.2):**
+```sql
+SELECT TABLE_NAME FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = 'd5ea2e96_solutegdb'
+AND TABLE_NAME IN ('tenants','platformAdmins','gestors','condominiums','notificationContacts');
 ```
 
-**Validação (cada sub-passo):** contagem de tabelas/FKs/índices via `information_schema` (queries prontas no `PENDENCIAS_DEPLOY_PRODUCAO.md`), contagem de linhas de `clients`/`workOrders`/`products` batendo com antes.
-**Reversão:** restaurar do backup; ou, se for só uma tabela isolada, `DROP TABLE`/`ALTER TABLE` reverso (mas nesse ponto ainda não há dado novo em risco — as tabelas centrais nascem vazias).
+**SQL (extraído de `drizzle/0033_giant_tomorrow_man.sql` — 5 CREATE TABLE + 4 FK + 10 CREATE INDEX, na ordem):**
+```sql
+-- ── 5 tabelas (já com COLLATE=utf8mb4_bin embutido) ──
+CREATE TABLE `tenants` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`name` varchar(200) NOT NULL,
+	`slug` varchar(100) NOT NULL,
+	`isPlatformTenant` tinyint NOT NULL DEFAULT 0,
+	`logoUrl` varchar(500),
+	`primaryColor` varchar(7) NOT NULL DEFAULT '#D4A84B',
+	`whatsappNumber` varchar(30),
+	`contactEmail` varchar(200),
+	`cnpj` varchar(18),
+	`address` text,
+	`city` varchar(100),
+	`state` varchar(2),
+	`active` tinyint NOT NULL DEFAULT 1,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `tenants_id` PRIMARY KEY(`id`),
+	CONSTRAINT `tenants_slug_unique` UNIQUE(`slug`)
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE `platformAdmins` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`name` varchar(200) NOT NULL,
+	`email` varchar(200) NOT NULL,
+	`passwordHash` varchar(255) NOT NULL,
+	`active` tinyint NOT NULL DEFAULT 1,
+	`lastLoginAt` timestamp,
+	`mustResetPassword` tinyint NOT NULL DEFAULT 0,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `platformAdmins_id` PRIMARY KEY(`id`),
+	CONSTRAINT `platformAdmins_email_unique` UNIQUE(`email`)
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE `gestors` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`tenantId` int NOT NULL,
+	`name` varchar(200) NOT NULL,
+	`email` varchar(200),
+	`whatsapp` varchar(30),
+	`username` varchar(100) NOT NULL,
+	`passwordHash` varchar(255) NOT NULL,
+	`role` varchar(40) NOT NULL DEFAULT 'sindico',
+	`active` tinyint NOT NULL DEFAULT 1,
+	`mustResetPassword` tinyint NOT NULL DEFAULT 1,
+	`lastLoginAt` timestamp,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `gestors_id` PRIMARY KEY(`id`),
+	CONSTRAINT `gestors_tenantId_username_unique` UNIQUE(`tenantId`,`username`)
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE `condominiums` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`tenantId` int NOT NULL,
+	`gestorId` int,
+	`name` varchar(200) NOT NULL,
+	`address` text,
+	`city` varchar(100),
+	`state` varchar(2),
+	`zipCode` varchar(10),
+	`units` int,
+	`active` tinyint NOT NULL DEFAULT 1,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `condominiums_id` PRIMARY KEY(`id`)
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE `notificationContacts` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`condominiumId` int NOT NULL,
+	`name` varchar(200) NOT NULL,
+	`whatsapp` varchar(30) NOT NULL,
+	`email` varchar(200),
+	`role` varchar(100),
+	`active` tinyint NOT NULL DEFAULT 1,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `notificationContacts_id` PRIMARY KEY(`id`)
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+-- ── 4 foreign keys (todas as 5 tabelas já existem neste ponto) ──
+ALTER TABLE `condominiums` ADD CONSTRAINT `condominiums_tenantId_tenants_id_fk` FOREIGN KEY (`tenantId`) REFERENCES `tenants`(`id`) ON DELETE no action ON UPDATE no action;
+ALTER TABLE `condominiums` ADD CONSTRAINT `condominiums_gestorId_gestors_id_fk` FOREIGN KEY (`gestorId`) REFERENCES `gestors`(`id`) ON DELETE no action ON UPDATE no action;
+ALTER TABLE `gestors` ADD CONSTRAINT `gestors_tenantId_tenants_id_fk` FOREIGN KEY (`tenantId`) REFERENCES `tenants`(`id`) ON DELETE no action ON UPDATE no action;
+ALTER TABLE `notificationContacts` ADD CONSTRAINT `notificationContacts_condominiumId_condominiums_id_fk` FOREIGN KEY (`condominiumId`) REFERENCES `condominiums`(`id`) ON DELETE no action ON UPDATE no action;
+
+-- ── 10 índices (os outros 3 pra fechar 13 já são UNIQUE/PK dentro das CREATE TABLE) ──
+CREATE INDEX `condominiums_tenantId_idx` ON `condominiums` (`tenantId`);
+CREATE INDEX `condominiums_gestorId_idx` ON `condominiums` (`gestorId`);
+CREATE INDEX `condominiums_tenantId_name_idx` ON `condominiums` (`tenantId`,`name`);
+CREATE INDEX `condominiums_active_idx` ON `condominiums` (`active`);
+CREATE INDEX `gestors_tenantId_idx` ON `gestors` (`tenantId`);
+CREATE INDEX `gestors_active_idx` ON `gestors` (`active`);
+CREATE INDEX `notificationContacts_condominiumId_idx` ON `notificationContacts` (`condominiumId`);
+CREATE INDEX `notificationContacts_active_idx` ON `notificationContacts` (`active`);
+CREATE INDEX `platformAdmins_active_idx` ON `platformAdmins` (`active`);
+CREATE INDEX `tenants_active_idx` ON `tenants` (`active`);
+```
+> **Só 10 `CREATE INDEX` acima** (não 13): os outros 3 índices "que faltam" pra fechar 13 são as constraints `UNIQUE`/`PRIMARY` já criadas dentro das `CREATE TABLE` (`tenants_slug_unique`, `platformAdmins_email_unique`, `gestors_tenantId_username_unique`) — não precisam de `CREATE INDEX` separado. A validação pós conta 18 entradas em `STATISTICS` (PKs + UNIQUEs + estes 10).
+
+**Validação do 6b:**
+```sql
+-- (a) 5 tabelas criadas, todas utf8mb4_bin
+SELECT TABLE_NAME, TABLE_COLLATION FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = 'd5ea2e96_solutegdb'
+AND TABLE_NAME IN ('tenants','platformAdmins','gestors','condominiums','notificationContacts')
+ORDER BY TABLE_NAME;
+-- Esperado: 5 linhas, TABLE_COLLATION = utf8mb4_bin em todas
+
+-- (b) 4 FKs registradas
+SELECT TABLE_NAME, CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS
+WHERE TABLE_SCHEMA = 'd5ea2e96_solutegdb' AND CONSTRAINT_TYPE = 'FOREIGN KEY'
+AND TABLE_NAME IN ('condominiums','gestors','notificationContacts') ORDER BY TABLE_NAME;
+-- Esperado: 4 linhas
+
+-- (c) 18 entradas de índice nas 5 tabelas (PKs + UNIQUEs + os 10 CREATE INDEX)
+SELECT COUNT(*) AS num_indices FROM information_schema.STATISTICS
+WHERE TABLE_SCHEMA = 'd5ea2e96_solutegdb'
+AND TABLE_NAME IN ('tenants','platformAdmins','gestors','condominiums','notificationContacts');
+-- Esperado: 18
+```
+**Reversão do 6b:** `DROP TABLE notificationContacts, condominiums, gestors, platformAdmins, tenants;` (nesta ordem — respeita as FKs; as tabelas nascem vazias, zero dado em risco).
+
+---
+
+### 6c — `tenantId` nullable nas 38 tabelas operacionais (3.7.1c)
+
+**Pré-validação — fecha o gap do diagnóstico (a Fase 4 não confirmou que as 38 existem):**
+```sql
+-- (a) As 38 tabelas-alvo existem? Esperado: num_tabelas = 38
+SELECT COUNT(*) AS num_tabelas FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = 'd5ea2e96_solutegdb' AND TABLE_NAME IN (
+  'budgetAttachments','budgetHistory','budgetItems','budgets','checklistInstances',
+  'clientDocuments','clients','configuracoesTecnico','inspectionReports','inspectionTasks',
+  'invites','laudoCitacoes','laudoFotos','laudoMedicoes','laudoTecnicos','laudos',
+  'notificationContacts','notificationLogs','pushSubscriptions','reports','technicians',
+  'waterTankAlertLog','waterTankFaultLog','waterTankMonitoring','waterTankSensors',
+  'workOrderAttachments','workOrderComments','workOrderHistory','workOrderMaterials',
+  'workOrderTasks','workOrderTimeTracking','workOrders','cashTransactions','categories',
+  'customers','products','saleItems','sales');
+-- Se < 38: listar quais faltam (query abaixo) e PARAR — decidir com a arquiteta.
+
+-- (b) Nenhuma das 38 já tem tenantId? Esperado: 0 linhas
+--     (as centrais tenants/gestors/condominiums TÊM tenantId, mas não estão nesta lista;
+--      notificationContacts foi criada na 6b SEM tenantId, então aqui ainda não tem)
+SELECT TABLE_NAME FROM information_schema.COLUMNS
+WHERE TABLE_SCHEMA = 'd5ea2e96_solutegdb' AND COLUMN_NAME = 'tenantId' AND TABLE_NAME IN (
+  'budgetAttachments','budgetHistory','budgetItems','budgets','checklistInstances',
+  'clientDocuments','clients','configuracoesTecnico','inspectionReports','inspectionTasks',
+  'invites','laudoCitacoes','laudoFotos','laudoMedicoes','laudoTecnicos','laudos',
+  'notificationContacts','notificationLogs','pushSubscriptions','reports','technicians',
+  'waterTankAlertLog','waterTankFaultLog','waterTankMonitoring','waterTankSensors',
+  'workOrderAttachments','workOrderComments','workOrderHistory','workOrderMaterials',
+  'workOrderTasks','workOrderTimeTracking','workOrders','cashTransactions','categories',
+  'customers','products','saleItems','sales');
+```
+
+**SQL (38 `ADD COLUMN tenantId int NULL` — de `drizzle/0034_wonderful_vulcan.sql`):**
+```sql
+ALTER TABLE `budgetAttachments`   ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `budgetHistory`       ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `budgetItems`         ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `budgets`             ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `checklistInstances`  ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `clientDocuments`     ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `clients`             ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `configuracoesTecnico` ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `inspectionReports`   ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `inspectionTasks`     ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `invites`             ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `laudoCitacoes`       ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `laudoFotos`          ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `laudoMedicoes`       ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `laudoTecnicos`       ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `laudos`              ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `notificationContacts` ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `notificationLogs`    ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `pushSubscriptions`   ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `reports`             ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `technicians`         ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `waterTankAlertLog`   ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `waterTankFaultLog`   ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `waterTankMonitoring` ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `waterTankSensors`    ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `workOrderAttachments` ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `workOrderComments`   ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `workOrderHistory`    ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `workOrderMaterials`  ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `workOrderTasks`      ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `workOrderTimeTracking` ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `workOrders`          ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `cashTransactions`    ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `categories`          ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `customers`           ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `products`            ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `saleItems`           ADD COLUMN `tenantId` int NULL AFTER `id`;
+ALTER TABLE `sales`               ADD COLUMN `tenantId` int NULL AFTER `id`;
+```
+
+**Validação do 6c:**
+```sql
+-- (a) 41 tabelas com coluna tenantId no total
+SELECT COUNT(*) AS tabelas_com_tenantid FROM information_schema.COLUMNS
+WHERE TABLE_SCHEMA = 'd5ea2e96_solutegdb' AND COLUMN_NAME = 'tenantId';
+-- Esperado: 41 = 38 operacionais (0034, esta fase) + gestors + condominiums (0033, 6b)
+--   + auditLog (0032, 6a — já nasce com tenantId).
+--   NÃO têm tenantId: tenants, platformAdmins, loginAttempts, migrationAuditLog.
+--   → confira a lista explícita se o número divergir:
+SELECT TABLE_NAME FROM information_schema.COLUMNS
+WHERE TABLE_SCHEMA = 'd5ea2e96_solutegdb' AND COLUMN_NAME = 'tenantId' ORDER BY TABLE_NAME;
+
+-- (b) dados intactos — contagens batem com antes do cutover
+SELECT
+  (SELECT COUNT(*) FROM clients)    AS clientes,
+  (SELECT COUNT(*) FROM workOrders) AS ordens,
+  (SELECT COUNT(*) FROM products)   AS produtos;
+-- Esperado: mesmos counts do diagnóstico (Fase 4)
+```
+**Reversão do 6c:** por tabela, `ALTER TABLE <t> DROP COLUMN tenantId;` — colunas nullable recém-criadas, sem dado ainda (a migração de dados só carimba na Fase 7).
 
 ---
 
