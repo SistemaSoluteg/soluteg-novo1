@@ -163,7 +163,7 @@ Atualizar os arquivos de memória **imediatamente** após cada mudança relevant
 
 - Servidor de produção: VPS, comando `deploy-app` executado em `/var/www/soluteg/backend` (branch `master`)
 - Servidor de staging: comando `deploy-tst` em `/var/www/soluteg-staging` (branch `multi-tenant`)
-- Repositório: `JncBombas/soluteg-novo1` (atenção ao typo sem "t": `solueg-novo1`)
+- Repositório: `SistemaSoluteg/soluteg-novo1` (transferido de `JncBombas`; atenção ao typo sem "t": `solueg-novo1`)
 - O deploy no VPS faz `git pull` — por isso o `git push` deve acontecer após cada commit
 
 ---

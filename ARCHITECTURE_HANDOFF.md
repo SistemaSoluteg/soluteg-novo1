@@ -1298,7 +1298,7 @@ SMTP_PASS=...
 - **Email comercial** — `contato@soluteg.com.br`
 - **Hosting** — Hostgator (VPS Linux + MySQL)
 - **DNS** — gerenciado no painel do Hostgator
-- **GitHub** — `https://github.com/JncBombas/soluteg-novo1` (privado)
+- **GitHub** — `https://github.com/SistemaSoluteg/soluteg-novo1` (privado; transferido de `JncBombas`)
 
 ---
 

@@ -23,7 +23,7 @@ Como subir mudanças de código e aplicar migrações de banco, em **staging** e
 **Infra comum:**
 - **VPS (app):** `129.121.36.243`, SSH porta `22022`, usuário `root`.
 - **MySQL:** host `69.6.213.57:3306` (servidor separado do VPS de app).
-- **Repositório:** `JncBombas/soluteg-novo1` (cuidado com o typo comum `solueg-novo1`, sem o "t").
+- **Repositório:** `SistemaSoluteg/soluteg-novo1` (cuidado com o typo comum `solueg-novo1`, sem o "t").
 
 > O staging é isolado por flags no `.env`: `PORT=3001`, `DB_NAME=d5ea2e96_tst`, `MQTT_DISABLED=true`, `WHATSAPP_DISABLED=true`. Assim ele não consome MQTT real nem envia WhatsApp para clientes.
 
