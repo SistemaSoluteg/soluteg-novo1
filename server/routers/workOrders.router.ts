@@ -899,49 +899,49 @@ export const workOrdersRouter = router({
   }),
 
   // ==================== METRICS ====================
-  // ATENÇÃO: Métricas não foram escopadas por tenant nesta etapa, conforme solicitado.
-  // Elas continuarão a agregar dados de TODOS os tenants.
+  // Isolado por tenant (hardening pré-cutover) — todas as agregações filtram
+  // por ctx.tenantId, que vem do servidor (JWT do admin), nunca do input.
   metrics: router({
-    getStats: adminLocalProcedure.query(async () => {
+    getStats: adminLocalProcedure.query(async ({ ctx }) => {
       const metrics = await import("../workOrdersMetrics");
-      return await metrics.getWorkOrderStats();
+      return await metrics.getWorkOrderStats(ctx.tenantId);
     }),
-    getByStatus: adminLocalProcedure.query(async () => {
+    getByStatus: adminLocalProcedure.query(async ({ ctx }) => {
       const metrics = await import("../workOrdersMetrics");
-      return await metrics.getWorkOrdersByStatus();
+      return await metrics.getWorkOrdersByStatus(ctx.tenantId);
     }),
-    getByType: adminLocalProcedure.query(async () => {
+    getByType: adminLocalProcedure.query(async ({ ctx }) => {
       const metrics = await import("../workOrdersMetrics");
-      return await metrics.getWorkOrdersByType();
+      return await metrics.getWorkOrdersByType(ctx.tenantId);
     }),
-    getAverageCompletionTime: adminLocalProcedure.query(async () => {
+    getAverageCompletionTime: adminLocalProcedure.query(async ({ ctx }) => {
       const metrics = await import("../workOrdersMetrics");
-      return await metrics.getAverageCompletionTime();
+      return await metrics.getAverageCompletionTime(ctx.tenantId);
     }),
 
-    getFinancialStats: adminLocalProcedure.query(async () => {
+    getFinancialStats: adminLocalProcedure.query(async ({ ctx }) => {
       const metrics = await import("../workOrdersMetrics");
-      return await metrics.getFinancialStats();
+      return await metrics.getFinancialStats(ctx.tenantId);
     }),
-    getByMonth: adminLocalProcedure.query(async () => {
+    getByMonth: adminLocalProcedure.query(async ({ ctx }) => {
       const metrics = await import("../workOrdersMetrics");
-      return await metrics.getWorkOrdersByMonth();
+      return await metrics.getWorkOrdersByMonth(ctx.tenantId);
     }),
-    getCompletionRate: adminLocalProcedure.query(async () => {
+    getCompletionRate: adminLocalProcedure.query(async ({ ctx }) => {
       const metrics = await import("../workOrdersMetrics");
-      return await metrics.getCompletionRate();
+      return await metrics.getCompletionRate(ctx.tenantId);
     }),
-    getDelayed: adminLocalProcedure.query(async () => {
+    getDelayed: adminLocalProcedure.query(async ({ ctx }) => {
       const metrics = await import("../workOrdersMetrics");
-      return await metrics.getDelayedWorkOrders();
+      return await metrics.getDelayedWorkOrders(ctx.tenantId);
     }),
-    getTopClients: adminLocalProcedure.query(async () => {
+    getTopClients: adminLocalProcedure.query(async ({ ctx }) => {
       const metrics = await import("../workOrdersMetrics");
-      return await metrics.getTopClientsByWorkOrders();
+      return await metrics.getTopClientsByWorkOrders(ctx.tenantId);
     }),
-    getMaterialsCostByWorkOrder: adminLocalProcedure.query(async () => {
+    getMaterialsCostByWorkOrder: adminLocalProcedure.query(async ({ ctx }) => {
       const metrics = await import("../workOrdersMetrics");
-      return await metrics.getMaterialsCostByWorkOrder();
+      return await metrics.getMaterialsCostByWorkOrder(ctx.tenantId);
     }),
   }),
 
