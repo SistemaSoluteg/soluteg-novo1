@@ -13,7 +13,7 @@
 ⏭️  Fase 2   — Pulada deliberadamente (hardware definido fora do código)
 ✅ Fase 3   — Portal técnico PWA offline
 🟡 Fase 3.6 — Web Push (infra pronta, ativação adiada para após multi-tenant)
-🟡 Fase 3.7 — Multi-tenant (EM ANDAMENTO — 3.7.2 + 3.7.1f CONCLUÍDAS E VALIDADAS EM STAGING: 9 routers isolados + travamento NOT NULL/FK + rotação JWT. Falta o **cutover de produção** — produção ainda com zero do multi-tenant)
+🟡 Fase 3.7 — Multi-tenant (EM ANDAMENTO — 3.7.2 + 3.7.1f CONCLUÍDAS E VALIDADAS EM STAGING: 9 routers isolados + travamento NOT NULL/FK + rotação JWT. Próximo: **hardening pré-cutover** (SEC-02/03, LAUDO-01, metrics) → **cutover de produção** — produção ainda com zero do multi-tenant)
 ⏳ Fase 4   — Validação comercial
 ⏳ Fase 5   — Landing page comercial soluteg.com.br
 ```
@@ -92,6 +92,18 @@ Visão arquitetural completa em [`ARCHITECTURE_HANDOFF.md`](./ARCHITECTURE_HANDO
 | 3.7.9 | Notificações por tenant (WhatsApp multi-instância + Email + Templates editáveis) — **depois do isolamento 3.7.2** | ⏳ Pendente |
 
 > **⚠️ Ordem de execução alterada (05/08/2026):** o isolamento de queries (**3.7.2**) passou a vir **ANTES** do NOT NULL (**3.7.1f**) — repare que a tabela acima já reflete essa ordem, mesmo com os identificadores fora de sequência numérica. Motivo: o código da aplicação ainda **não popula `tenantId` nos INSERTs** (a coluna só aparece em `server/pdvSchema.ts`, em nenhum router). Aplicar NOT NULL agora quebraria toda criação de registro em runtime. Primeiro o **3.7.2** faz o código passar a ler e escrever `tenantId` em todo lugar; só **depois** o **3.7.1f** trava com NOT NULL + FKs + índices + rotação do JWT_SECRET.
+
+### Dívidas abertas → janela de execução
+
+> Sincroniza [`docs/PENDENCIAS_TECNICAS.md`](./docs/PENDENCIAS_TECNICAS.md) com o roadmap: o **detalhe** (o quê/porquê) fica no registro de dívida; o **quando** fica aqui. (Atualizado 21/08/2026.)
+
+| Dívida | Janela de execução |
+|---|---|
+| `SEC-02`, `SEC-03`, `LAUDO-01`, `workOrders.metrics` | **Hardening pré-cutover** — leva imediata (antes de marcar o cutover) |
+| `LOCK-02` (`waterTankSensors`) | **Cutover**: excluir do `NOT NULL` (já decidido). Fix de código (carimbar tenant no sensor atribuído): dívida da área de sensores |
+| `LOCK-01` (`admins`/`auditLog`/`invites`/`inspectionReports`) | **Cutover**: conferir writers mortos ou excluir do `NOT NULL`. Carimbar `tenantId` ao reativar → **3.7.4** (admins), **3.7.6** (invites), **3.7.7** (auditLog) |
+| `VALID-01` (propagação SSE em tempo real) | Smoke test pós-cutover (prod tem MQTT) — ou staging com o `sensor_01` religado |
+| `NOTIF-01` (`notificationLogs` sem `tenantId`) | **3.7.9** (reescreve o fluxo de notificações); fica nullable até lá |
 
 ### Sub-fase 3.7.9 — Notificações por tenant (planejada em 16/08/2026)
 

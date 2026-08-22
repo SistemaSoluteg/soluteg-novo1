@@ -13,6 +13,8 @@
 
 ## 🟡 Média Prioridade
 
+> **Agendamento (quando cada item entra):** ver `ROADMAP.md` → seção "Dívidas abertas → janela de execução".
+
 | ID | Onde | O que fazer |
 |---|---|---|
 | ~~SEC-01~~ ✅ FECHADO (15/08, commit `44bd66b`) | `server/index.ts` | A rota `GET /api/admin-metrics` sem auth foi **removida** e substituída por `adminMetrics.router.getDashboard` (tRPC `adminLocalProcedure`, escopado por `ctx.adminId` + `ctx.tenantId`, sem input de identidade). |
